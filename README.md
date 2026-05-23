@@ -183,7 +183,8 @@ It skips, loudly, when there is no engine. CI runs it against GoCommerce's
 Bump `version` in `package.json` and push it to `main`. The Publish workflow
 sees a version npm does not have yet, builds, tests, publishes it with
 provenance, and creates the matching `v<version>` tag and GitHub release. It
-needs an `NPM_TOKEN` repository secret that can publish under `@misiki`.
+needs an `NPM_TOKEN` secret in the repository's `npm-publish` environment, able
+to publish under `@misiki`.
 
 ## License
 

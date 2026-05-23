@@ -5,7 +5,7 @@ name: Publish
 # creates the matching v<version> tag and GitHub release. Re-running on a
 # version already published does nothing.
 #
-# Needs one repository secret, NPM_TOKEN: an npm automation (or granular,
+# Needs NPM_TOKEN, a secret of the npm-publish environment: an npm automation (or granular,
 # publish-scoped) token for an account that may publish under @misiki.
 on:
   push:
@@ -20,6 +20,8 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # NPM_TOKEN is an environment secret, readable only by jobs that name it.
+    environment: npm-publish
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
