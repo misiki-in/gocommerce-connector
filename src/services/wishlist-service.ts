@@ -64,6 +64,19 @@ export class WishlistService extends BaseService {
 		return (pairs ?? []).map((p) => ({ ...p, exists: saved.has(String(p.productId)) }))
 	}
 
+	/**
+	 * The address the store may write to when a saved product is back in stock
+	 * or on sale; `''` takes it off. A list that does not exist yet is made.
+	 */
+	async setEmail(email: string) {
+		const list = (await this.current()) ?? (await this.create())
+		await this.data<Wishlist>(`/x/wishlist/${enc(list.token)}`, {
+			method: 'PATCH',
+			body: { email: String(email ?? '').trim() },
+		})
+		return { email: String(email ?? '').trim() || null }
+	}
+
 	private async current(): Promise<(Wishlist & { token: string }) | null> {
 		const token = wishlistToken()
 		if (!token) return null

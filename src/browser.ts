@@ -212,7 +212,7 @@ type PlacedOrder = { number: string; token: string; cartId: string; reference?: 
 
 const ORDERS = 'gocommerce_orders'
 
-const placedOrders = (): PlacedOrder[] => readJSON<PlacedOrder[]>(ORDERS) ?? []
+export const placedOrders = (): PlacedOrder[] => readJSON<PlacedOrder[]>(ORDERS) ?? []
 
 /**
  * Keeps an order's access token. The engine returns it exactly once — a

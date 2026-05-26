@@ -2,6 +2,7 @@ import { readStaticStore } from '../static-store'
 import { BaseService } from './base.service'
 import { StoreFacts } from './facts'
 import { MenuService } from './menu-service'
+import { NewsletterService } from './newsletter-service'
 
 /** `$`, `€`, `₹` — from the platform's own tables rather than a list kept here. */
 function symbolFor(code: string): string {
@@ -56,6 +57,23 @@ export class StoreService extends BaseService {
 			return { sitemap: on ? '/sitemaps/sitemap.xml' : '' } as T
 		}
 		return super.get<T>(path)
+	}
+
+	/**
+	 * The storefront's newsletter box posts `{ email }` to Litekart's
+	 * `/api/newsletter/subscribe` through this verb; ext/newsletter is where
+	 * that list lives here.
+	 */
+	override async post<T = any>(path: string, data?: unknown): Promise<T> {
+		if (path.split('?')[0] === '/api/newsletter/subscribe') {
+			const { email, name } = (data ?? {}) as { email?: string; name?: string }
+			return (await new NewsletterService(this._fetch).subscribe({
+				email: email ?? '',
+				name,
+				source: 'storefront',
+			})) as T
+		}
+		return super.post<T>(path, data)
 	}
 
 	private async live(): Promise<Record<string, unknown>> {

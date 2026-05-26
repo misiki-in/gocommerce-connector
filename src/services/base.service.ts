@@ -85,7 +85,10 @@ export class BaseService {
 	 * as what it is rather than as a JSON parse error three frames away.
 	 */
 	protected async engine<T>(path: string, req: EngineRequest = {}): Promise<Envelope<T>> {
-		const url = this.engineURL(path, req.query)
+		// A language only means something on a read; a write's answer is a cart
+		// or an order, whose lines keep the words they were bought under.
+		const lang = (req.method ?? 'GET') === 'GET' ? this.creds.language : undefined
+		const url = this.engineURL(path, lang ? { lang, ...req.query } : req.query)
 		const headers: Record<string, string> = { Accept: 'application/json', ...req.headers }
 		if (req.body !== undefined) headers['Content-Type'] = 'application/json'
 		if (this.creds.store) headers['X-Store'] = this.creds.store

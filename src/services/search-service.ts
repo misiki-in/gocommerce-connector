@@ -6,6 +6,21 @@ const num = (v: string | null): number | undefined => {
 	return Number.isFinite(n) ? n : undefined
 }
 
+/** `?attributes.color=Red,Blue` — the storefront's facet params — as `{ color: ['Red', 'Blue'] }`. */
+function attributesFrom(p: URLSearchParams): Record<string, string[]> | undefined {
+	const out: Record<string, string[]> = {}
+	for (const [key, value] of p) {
+		if (!key.startsWith('attributes.')) continue
+		const handle = key.slice('attributes.'.length)
+		const values = value
+			.split(',')
+			.map((v) => decodeURIComponent(v).trim())
+			.filter(Boolean)
+		if (handle && values.length) out[handle] = [...(out[handle] ?? []), ...values]
+	}
+	return Object.keys(out).length ? out : undefined
+}
+
 /**
  * The listing pages' search: `/products?search=&sort=&page=` and the category
  * catch-all `/{slug}`.
@@ -39,6 +54,7 @@ export class SearchService extends CatalogService {
 				category: slug || p.get('categories')?.split(',')[0] || undefined,
 				priceFrom: num(p.get('priceFrom')) ?? num(from ?? null),
 				priceTo: num(p.get('priceTo')) ?? num(to ?? null),
+				attributes: attributesFrom(p),
 			})
 			return {
 				data: res.data,

@@ -1,6 +1,6 @@
 import type { Cart, CheckoutResult } from '../engine'
 import { GoCommerceError, NotSupportedError } from '../errors'
-import { toEngineAddress } from '../map'
+import { toEngineAddress, toOrder } from '../map'
 import { minorToMajor } from '../money'
 import {
 	cartExtras,
@@ -93,10 +93,11 @@ export class CheckoutService extends BaseService {
 		return { order_no: order.number, status: 'processing' }
 	}
 
-	// The family's other gateways. GoCommerce's Stripe is a Payment Element
-	// (a client secret, not a hosted page), and PayPal, Cashfree, PhonePe and
-	// Affirm are not engine gateways at all; paymentMethodService never lists
-	// them, so these are reached only by a storefront that hard-codes one.
+	// The family's other gateway flows. GoCommerce's Stripe is a Payment
+	// Element (a client secret, not a hosted page) — `checkout('stripe')` returns
+	// that secret for a storefront that mounts the element. Cashfree, PhonePe and
+	// Affirm are not engine gateways at all. paymentMethodService never offers
+	// these codes, so they are reached only by a storefront that hard-codes one.
 	async checkoutStripe(): Promise<never> {
 		throw unsupported(
 			'checkoutStripe',
@@ -106,11 +107,35 @@ export class CheckoutService extends BaseService {
 	async checkoutStripeCapture(): Promise<never> {
 		throw unsupported('checkoutStripeCapture', 'Stripe confirms payments to the engine by webhook')
 	}
-	async checkoutPaypal(): Promise<never> {
-		throw unsupported('checkoutPaypal', 'the engine has no PayPal gateway')
+	/**
+	 * The storefront's generic redirect flow, which it reaches through the code
+	 * `PAYPAL`. The engine has no PayPal gateway; paymentMethodService puts the
+	 * store's first hosted-page gateway — Adyen, Paddle, Lemon Squeezy, Creem,
+	 * Hyperswitch or RevenueCat — under that code, with its own name and a
+	 * neutral icon, because this is the one storefront flow that sends a shopper
+	 * to a URL and back. The shopper returns to the success page; the gateway's
+	 * webhook tells the engine the order is paid.
+	 */
+	async checkoutPaypal({ cartId, origin }: { cartId?: string; origin?: string; return_url?: string } = {}) {
+		const gateway = await this.redirectGateway()
+		if (!gateway) throw unsupported('checkoutPaypal', 'this store has no hosted-page payment gateway switched on')
+		const id = cartId || storedCartId() || ''
+		const back = origin ? `${origin.replace(/\/+$/, '')}/checkout/success?cart_id=${encodeURIComponent(id)}` : undefined
+		const result = await this.place(gateway, id, back ? { return_url: back } : {})
+		const url = result.payment.client_data?.url
+		if (!url) throw new GoCommerceError('The payment page did not open. Please try again.', 502)
+		return { redirect_url: url, order_no: result.order.number }
 	}
-	async capturePaypalPayment(): Promise<never> {
-		throw unsupported('capturePaypalPayment', 'the engine has no PayPal gateway')
+
+	/**
+	 * Nothing to capture: a hosted-page gateway confirms the payment to the
+	 * engine by webhook. Answering, rather than throwing, sends the storefront's
+	 * process page on to the success page instead of the failure page.
+	 */
+	async capturePaypalPayment({
+		order_no,
+	}: { order_no?: string; token?: string; PayerID?: string; storeId?: string } = {}) {
+		return { order_no: order_no ?? null, status: 'processing' }
 	}
 	async checkoutCashfree(): Promise<never> {
 		throw unsupported('checkoutCashfree', 'the engine has no Cashfree gateway')
@@ -135,6 +160,68 @@ export class CheckoutService extends BaseService {
 	}
 
 	/**
+	 * Any payment method the engine has switched on, by its engine code —
+	 * `cod`, `stripe`, `razorpay`, `adyen`, `paddle`, `helcim`… For a storefront
+	 * that drives the payment itself: the answer says what to do next.
+	 *
+	 * - `kind: 'none'` — nothing to pay now (cash on delivery).
+	 * - `kind: 'client_action'` — mount the gateway's own widget with
+	 *   `clientData`: Stripe's Payment Element takes `clientSecret`, Razorpay's
+	 *   modal `razorpay_order_id` and `key_id`, Helcim's `checkout_token`.
+	 * - `kind: 'redirect'` — send the shopper to `redirectUrl`; `returnUrl` is
+	 *   where the gateway brings them back.
+	 *
+	 * Either way the gateway's webhook tells the engine when the money arrives;
+	 * read `orderService.getOrder(orderNo).paymentStatus` to see it.
+	 */
+	async checkout(
+		code: string,
+		{
+			cartId,
+			returnUrl,
+			paymentData,
+			metadata,
+		}: {
+			cartId?: string
+			returnUrl?: string
+			paymentData?: Record<string, string>
+			metadata?: Record<string, unknown>
+		} = {},
+	) {
+		const result = await this.place(String(code).toLowerCase(), cartId, {
+			...(returnUrl ? { return_url: returnUrl } : {}),
+			...(paymentData ? { payment_data: paymentData } : {}),
+			...(metadata ? { metadata } : {}),
+		})
+		const data = result.payment.client_data ?? {}
+		return {
+			orderNo: result.order.number,
+			order: toOrder(result.order),
+			payment: {
+				kind: result.payment.kind,
+				provider: result.payment.provider,
+				reference: result.payment.reference ?? null,
+				clientSecret: data.client_secret ?? null,
+				redirectUrl: data.url ?? null,
+				clientData: data,
+			},
+		}
+	}
+
+	/** Every payment method the engine has switched on, by engine code and name — drivable here or not. */
+	async listMethods() {
+		const options = await this.data<{ methods: { code: string; name: string }[] | null; currency: string }>(
+			'/api/checkout',
+		)
+		return { methods: options.methods ?? [], currency: options.currency }
+	}
+
+	private async redirectGateway(): Promise<string | undefined> {
+		const { methods } = await this.listMethods()
+		return methods.find((m) => REDIRECT_GATEWAYS.has(m.code))?.code
+	}
+
+	/**
 	 * One checkout attempt.
 	 *
 	 * The Idempotency-Key is kept with the cart and reused while the request is
@@ -144,7 +231,11 @@ export class CheckoutService extends BaseService {
 	 * request — a different address, a different method — gets a new key, since
 	 * the engine refuses a key replayed with a different body.
 	 */
-	private async place(code: string, cartId?: string): Promise<CheckoutResult> {
+	private async place(
+		code: string,
+		cartId?: string,
+		extra: { return_url?: string; payment_data?: Record<string, string>; metadata?: Record<string, unknown> } = {},
+	): Promise<CheckoutResult> {
 		const id = cartId || storedCartId()
 		if (!id) throw new GoCommerceError('Your bag is empty.', 400)
 		const extras = cartExtras(id)
@@ -162,6 +253,7 @@ export class CheckoutService extends BaseService {
 			...(address.name ? { name: address.name } : {}),
 			address,
 			...(extras.shippingRateId ? { shipping_rate_id: Number(extras.shippingRateId) } : {}),
+			...extra,
 		}
 		const serialised = JSON.stringify(body)
 		const key = extras.attempt?.body === `${code}:${serialised}` ? extras.attempt.key : newKey()
@@ -197,6 +289,9 @@ export class CheckoutService extends BaseService {
 		return result
 	}
 }
+
+/** The engine's gateways that take payment on their own hosted page. */
+export const REDIRECT_GATEWAYS = new Set(['adyen', 'paddle', 'lemonsqueezy', 'creem', 'hyperswitch', 'revenuecat'])
 
 const unsupported = (method: string, why: string) => new NotSupportedError('CheckoutService', method, why)
 
