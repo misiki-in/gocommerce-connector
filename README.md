@@ -26,6 +26,7 @@ PUBLIC_GOCOMMERCE_API_URL=https://api.shop.example    # the engine
 PUBLIC_GOCOMMERCE_PROXY_PATH=/gocommerce              # see "The browser and CORS"
 # PUBLIC_GOCOMMERCE_CHANNEL=web                       # a sales channel, if the store has several
 # PUBLIC_GOCOMMERCE_STORE=acme                        # under `gocommerce platform`, on a shared API host
+# PUBLIC_GOCOMMERCE_LANGUAGE=fr                       # ask for this language (?lang=) on every read
 ```
 
 **Leave `PUBLIC_LITEKART_API_URL` unset.** The storefront rewrites every
@@ -42,7 +43,9 @@ gocommerce serve -identity -wishlist -reviews -cms -faq -menus
 
 Each is optional. Without `-identity` there is no sign-in (guest checkout
 always works); without `-reviews` products show no stars; and so on. Add
-`-meilisearch` (with `MEILI_HOST` and keys) for price sorting and price filters.
+`-meilisearch` (with `MEILI_HOST` and keys) for price sorting and price filters,
+`-newsletter` and `-contact` for the signup box and contact form, and `-b2b` for
+business buyers (see "Beyond the storefront's screens").
 
 ### The browser and CORS
 
@@ -84,7 +87,7 @@ proxy path unset and point the API URL at that origin.
 | featured / trending shelves | the collection with slug `featured` / `trending`; newest products when there is none |
 | bag | `/api/carts…`, `/api/carts/{token}/discount` |
 | delivery options | `/api/checkout/rates` |
-| payment methods | `/api/checkout` — cash on delivery and Razorpay (see below) |
+| payment methods | `/api/checkout` — cash on delivery, Razorpay, and the first hosted-page gateway (see below) |
 | place order | `POST /api/checkout/{code}` with an `Idempotency-Key` |
 | order lookup | `/api/orders/{number}?token=` (guest), `/x/identity/me/orders` (account) |
 | sign-in, sign-up, profile, password reset | `/x/identity/*` |
@@ -93,7 +96,10 @@ proxy path unset and point the API URL at that origin.
 | reviews | `/x/reviews` |
 | content pages (`/p/…`, legal pages) | `/x/cms/pages` |
 | FAQ | `/x/faq` |
-| menus | `/x/navigation/menus/{header,footer}`, laid over `store.menu` |
+| menus | `/x/navigation/menus/{header,footer}`, laid over `store.menu`; any menu by handle |
+| product specs table | the product's category attribute answers |
+| attribute filters (`?attributes.color=Red`) | `/api/products?attr=color:Red` |
+| newsletter box | `/x/newsletter/subscribe` |
 | contact form, product enquiries | `/x/contact/messages` |
 | price sort and filter, type-ahead | `/x/meilisearch/search`, falling back to the engine's own search |
 | store record | the storefront's own config, with the engine's currency, menus and module switches over it |
@@ -103,6 +109,36 @@ equivalent. Their lists answer empty and anything that would write or open one
 record throws `NotSupportedError`, naming the service and the method — a silent
 success would tell a shopper their message was sent when nothing left the
 browser.
+
+## Beyond the storefront's screens
+
+Every shopper-facing route the engine serves is reachable through this package —
+CI fails when the engine gains one that is not (`scripts/route-coverage.mjs`). The
+routes Svelte Commerce has no screen for are reached through services named for
+what they do. These answer the engine's own shapes — numeric ids, money as
+`{ amount_minor, currency }` — where the family's services answer Litekart's.
+
+| Service | Covers |
+| --- | --- |
+| `b2bService` (ext/b2b) | the company, roles and credit (`me`); members and roles; invitations; a quick order by SKU (`addLines`) and a repeat order (`reorder`); checkout on account with a PO number and partial lines, or an approval request; approve, reject, withdraw; quotes requested, read, accepted, declined; the public dealer form (`submitLead`) and a dealer's leads |
+| `checkoutService.checkout(code)` | any payment method the engine has switched on, answering a client secret, a redirect URL or nothing to do; `listMethods()` names them all |
+| `variantService` | a product's variants, one variant, and the marketplace's offers on it |
+| `newsletterService` | subscribe and unsubscribe |
+| `userService` | `requestEmailVerification()`, `refreshSession()`, and `claimOrder({ number })` — files a guest order under the account, explicitly: never at sign-in, where a shared computer would file one person's orders under the next |
+| `menuService` | `listMenus()` and `getMenu(handle)` beyond the header and footer |
+| `wishlistService` | `setEmail()` for back-in-stock mail |
+
+The admin API is deliberately not here. It takes an operator's token, and a
+storefront package runs in every shopper's browser.
+
+```ts
+import { b2bService } from '@misiki/gocommerce-connector'
+
+const { role, credit } = await b2bService.me()
+const { cart, rejected } = await b2bService.addLines({ lines: [{ sku: 'TEE-M', quantity: 24 }] })
+const placed = await b2bService.checkout({ poNumber: 'PO-1042' })
+if (placed.kind === 'approval') console.log('waiting for an approver', placed.approval.id)
+```
 
 ## Two things this package is careful about
 
@@ -132,14 +168,20 @@ Each of these is a real gap, listed so nobody has to find it in production.
   of a request to exactly `/api/products/<slug>`; the engine's slug route is
   `/api/products/slug/<slug>`, and `/api/products/<slug>` answers 400 for a
   non-numeric id.
-- **Payment.** The storefront drives a fixed list of gateway flows. Of the
-  engine's, cash on delivery and Razorpay's modal match. GoCommerce's Stripe is a
-  Payment Element (a client secret), not the hosted page the storefront
-  redirects to, and the engine's redirect gateways (Adyen, Paddle, Lemon
-  Squeezy, Creem, Hyperswitch, RevenueCat) have no matching flow. They are left
-  out of the payment list — each reported once in the console — rather than
-  shown as a button that fails at the last step. Payment is confirmed by the
-  gateway's webhook to the engine; the order shows `paymentStatus` once it lands.
+- **Payment.** The storefront drives a fixed list of gateway flows and passes
+  none of them the gateway the shopper chose. Cash on delivery and Razorpay's
+  modal match engine gateways directly. The storefront's redirect flow (which it
+  reaches by the code `PAYPAL`) carries the store's first hosted-page gateway —
+  Adyen, Paddle, Lemon Squeezy, Creem, Hyperswitch or RevenueCat — under that
+  gateway's own name and a neutral card icon; a second one cannot be told apart
+  from the first and is not offered. GoCommerce's Stripe is a Payment Element (a
+  client secret), which this storefront does not mount. Every method left off is
+  reported once in the console, and every one is reachable through
+  `checkoutService.checkout(code)` for a storefront that drives its own payment
+  UI. Payment is confirmed by the gateway's webhook to the engine; the order
+  shows `paymentStatus` once it lands.
+- **Attribute filters inside a category.** The engine filters by attribute on
+  the whole-shop listing only; on a category page they are not applied.
 - **Tax in the bag.** The engine's cart carries no tax or total; tax is computed
   when the order is placed. The bag shows subtotal − discount + delivery, and the
   order shows the real figures.
@@ -166,17 +208,22 @@ npm run typecheck
 npm test                 # builds, then runs both suites
 ```
 
-`test/unit.test.mjs` covers the translation with no engine. `test/live.test.mjs`
-runs the connector against a real one, seeding what it needs through the admin
-API under names unique to the run:
+`test/unit.test.mjs` covers the translation with no engine. The live suites,
+`test/live.test.mjs` and `test/live-more.test.mjs`, run the connector against a
+real one, seeding what they need through the admin API under names unique to
+the run:
 
 ```bash
-gocommerce serve -admin-token dev-token -identity -wishlist -reviews -cms -faq -menus
-GOCOMMERCE_URL=http://127.0.0.1:8080 GOCOMMERCE_ADMIN_TOKEN=dev-token npm test
+gocommerce serve -admin-token dev-token -identity -wishlist -reviews -cms -faq -menus -newsletter -contact -b2b
+GOCOMMERCE_URL=http://127.0.0.1:8080 GOCOMMERCE_ADMIN_TOKEN=dev-token \
+GOCOMMERCE_TEST_DB=postgres://…/the-stores-database npm test
 ```
 
-It skips, loudly, when there is no engine. CI runs it against GoCommerce's
-`main` on every push and nightly.
+`GOCOMMERCE_TEST_DB` lets the b2b suite mark its test accounts' emails
+confirmed — the engine confirms one only from a link it mails — and without it
+those tests skip. Use a throwaway store. The suites skip, loudly, when there is
+no engine. CI runs them against GoCommerce's `main` on every push and nightly,
+along with the route-coverage check.
 
 ## Releasing
 

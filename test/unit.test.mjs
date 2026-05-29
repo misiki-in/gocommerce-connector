@@ -409,3 +409,102 @@ test('the store record never fails, even with no engine to ask', async () => {
 	assert.equal(store.id, 'from_config')
 	assert.equal(store.name, 'Shop')
 })
+
+// ---------------------------------------------------------------- 0.3.0: the rest of the engine
+
+test('category attribute answers become the specs table', () => {
+	const p = m.toProduct(
+		product({ metadata: { category: { color: ['Black', 'White'], 'neck-style': 'Crew', empty: [] } } }),
+	)
+	assert.deepEqual(p.attributes, [
+		{ name: 'Color', value: 'Black, White', handle: 'color' },
+		{ name: 'Neck style', value: 'Crew', handle: 'neck-style' },
+	])
+})
+
+test('a hosted-page gateway rides the storefront’s redirect flow under its own name, never a PayPal mark', async () => {
+	m.clearStoreCache()
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const svc = new m.PaymentMethodService(async () =>
+		Response.json({
+			data: {
+				payment_methods: ['cod', 'stripe', 'paddle', 'adyen'],
+				methods: [
+					{ code: 'cod', name: 'Cash on delivery' },
+					{ code: 'stripe', name: 'Card (Stripe)' },
+					{ code: 'paddle', name: 'Paddle' },
+					{ code: 'adyen', name: 'Adyen' },
+				],
+				currency: 'USD',
+			},
+		}),
+	)
+	const { data } = await svc.list({})
+	assert.deepEqual(
+		data.map((x) => [x.code, x.engineCode, x.name]),
+		[
+			['COD', 'cod', 'Cash on delivery'],
+			['PAYPAL', 'paddle', 'Paddle'],
+		],
+		'Stripe has no flow here; only the first hosted-page gateway can be told apart',
+	)
+	assert.equal(data[1].img, '/payment/card.svg')
+})
+
+test('a configured language is asked for on reads, never on writes', async () => {
+	const seen = []
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', language: 'fr' })
+	const svc = new m.PageService(async (url, init) => {
+		seen.push(`${init?.method ?? 'GET'} ${url}`)
+		return Response.json({
+			data: {
+				id: 1,
+				slug: 'a',
+				title: 'A',
+				body: '',
+				status: 'published',
+				language: 'fr',
+				created_at: '',
+				updated_at: '',
+			},
+		})
+	})
+	await svc.getOne('a')
+	const news = new m.NewsletterService(async (url, init) => {
+		seen.push(`${init?.method ?? 'GET'} ${url}`)
+		return Response.json({ data: { status: 'subscribed' } })
+	})
+	await news.subscribe({ email: 'a@example.com' })
+	m.BaseService.setCredentials({ language: undefined })
+	assert.deepEqual(seen, [
+		'GET http://engine.test/x/cms/pages/a?lang=fr',
+		'POST http://engine.test/x/newsletter/subscribe',
+	])
+})
+
+test('a company’s record reaches the storefront without the store’s own notes', async () => {
+	globalThis.window = {
+		location: { origin: 'http://storefront.test' },
+		localStorage: { getItem: () => 'tok', setItem() {}, removeItem() {} },
+	}
+	globalThis.document = { cookie: '' }
+	try {
+		const svc = new m.B2bService(async (_url, init) => {
+			assert.equal(init.headers.Authorization, 'Bearer tok', 'a b2b call carries the shopper’s session')
+			return Response.json({
+				data: {
+					company: { id: 1, name: 'Acme', notes: 'slow payer', metadata: { internal: true } },
+					role: 'buyer',
+					credit: { limit: null },
+				},
+			})
+		})
+		const me = await svc.me()
+		assert.equal(me.company.name, 'Acme')
+		assert.equal('notes' in me.company, false)
+		assert.equal('metadata' in me.company, false)
+	} finally {
+		delete globalThis.window
+		delete globalThis.document
+	}
+})
