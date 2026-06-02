@@ -16,6 +16,22 @@ export type EngineRequest = {
 }
 
 /**
+ * A media URL the shopper's browser can load. The engine answers its own
+ * uploads root-relative (`/media/ab12.png`), which a browser resolves against
+ * the storefront's origin, where no such file is. Through the proxy path when
+ * one is set — a root-relative path that reads the same in SSR and in the
+ * browser, so hydration agrees — and otherwise from the engine's origin.
+ * Absolute URLs, such as pictures the media library links rather than holds,
+ * pass through untouched.
+ */
+export function mediaUrl(url: string | null | undefined): string | null {
+	if (!url) return null
+	if (!url.startsWith('/') || url.startsWith('//')) return url
+	const { apiUrl, proxyPath } = BaseService.getCredentials()
+	return (proxyPath || apiUrl || '').trim().replace(/\/+$/, '') + url
+}
+
+/**
  * BaseService — the one place this connector talks to the engine.
  *
  * - Credentials arrive through the static `setCredentials` (both hooks), never
@@ -51,6 +67,18 @@ export class BaseService {
 
 	protected get creds(): Credentials {
 		return BaseService._credentials
+	}
+
+	/**
+	 * The store this call is for: the request host's subdomain under
+	 * `baseDomain`, else the static `store`. Read per call, never stored on the
+	 * instance, because the server shares one process (and one credentials
+	 * object) across every concurrent request and each may be for a different host.
+	 */
+	protected get store(): string | undefined {
+		const { baseDomain, store } = this.creds
+		const host = typeof window !== 'undefined' ? window.location?.hostname : requestHost?.()
+		return storeForHost(host, baseDomain) ?? store
 	}
 
 	/**
@@ -91,7 +119,8 @@ export class BaseService {
 		const url = this.engineURL(path, lang ? { lang, ...req.query } : req.query)
 		const headers: Record<string, string> = { Accept: 'application/json', ...req.headers }
 		if (req.body !== undefined) headers['Content-Type'] = 'application/json'
-		if (this.creds.store) headers['X-Store'] = this.creds.store
+		const store = this.store
+		if (store) headers['X-Store'] = store
 		if (req.auth) {
 			const token = sessionToken()
 			if (!token) throw new GoCommerceError('Please sign in to continue.', 401, 'unauthorized')
@@ -205,6 +234,32 @@ export class BaseService {
 			throw new GoCommerceError(body?.error?.message ?? `Request failed with status ${res.status}`, res.status)
 		return body as T
 	}
+}
+
+let requestHost: (() => string | undefined) | undefined
+
+/**
+ * Where the server learns the current request's host, for `baseDomain`. A
+ * SvelteKit storefront registers `() => getRequestEvent().url.hostname` once
+ * at boot; the browser needs nothing, it reads `window.location`.
+ */
+export function setRequestHost(fn: () => string | undefined): void {
+	requestHost = fn
+}
+
+/**
+ * `acme.shopnx.in` under `shopnx.in` is store `acme`; anything else is nobody's.
+ * The engine's own rule (`Stores.ByHost`): case-insensitive, a port and a
+ * trailing dot ignored, and exactly one label, so `a.b.shopnx.in` and
+ * `shopnx.in` itself name no store.
+ */
+export function storeForHost(host: string | undefined, baseDomain: string | undefined): string | undefined {
+	if (!host || !baseDomain) return undefined
+	const h = host.toLowerCase().replace(/\.$/, '').replace(/:\d+$/, '')
+	const suffix = '.' + baseDomain.toLowerCase().replace(/^\.+/, '').replace(/\.$/, '')
+	if (!h.endsWith(suffix)) return undefined
+	const slug = h.slice(0, -suffix.length)
+	return slug && !slug.includes('.') ? slug : undefined
 }
 
 /** A refused connection is the commonest failure in development; it says which address did not answer. */

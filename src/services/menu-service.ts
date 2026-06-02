@@ -64,7 +64,7 @@ export class MenuService extends BaseService {
 	/** The header and footer menus, or `null` when the module is not there. Cached: a menu is store-level. */
 	async engineMenus(): Promise<StorefrontMenu[] | null> {
 		if (!(await this.facts.pluginOn('navigation'))) return null
-		return remember(`${this.engineBase()}|${this.creds.store ?? ''}|menus`, async () => {
+		return remember(`${this.engineBase()}|${this.store ?? ''}|menus`, async () => {
 			const out: StorefrontMenu[] = []
 			for (const handle of ['header', 'footer']) {
 				try {

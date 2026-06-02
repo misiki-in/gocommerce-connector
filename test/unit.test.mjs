@@ -96,6 +96,29 @@ test('a product crosses with string ids, major-unit prices and only live variant
 	assert.equal(p.manageInventory, true)
 })
 
+test('an engine upload is loaded from the engine, never the storefront’s own origin', () => {
+	const uploaded = () =>
+		m.toProduct(
+			product({
+				image_url: '/media/lead.png',
+				variants: [variant({ image: null, images: [{ media_id: 2, url: '/media/v11.png', kind: 'image' }] })],
+			}),
+		)
+	try {
+		m.BaseService.setCredentials({ apiUrl: 'https://engine.example/', proxyPath: '/backend' })
+		assert.deepEqual(uploaded().images.split(','), ['/backend/media/lead.png', '/backend/media/v11.png'])
+		assert.equal(uploaded().variants[0].thumbnail, '/backend/media/v11.png')
+
+		m.BaseService.setCredentials({ proxyPath: '' })
+		assert.equal(uploaded().thumbnail, 'https://engine.example/media/lead.png')
+
+		assert.equal(m.toProduct(product()).thumbnail, 'https://cdn.example/lead.jpg', 'a linked picture stays put')
+		assert.equal(m.mediaUrl('//cdn.example/x.png'), '//cdn.example/x.png')
+	} finally {
+		m.BaseService.setCredentials({ apiUrl: '', proxyPath: '' })
+	}
+})
+
 test('a compare-at price is the struck-through mrp', () => {
 	const p = m.toProduct(product({ variants: [variant({ compare_at_price: money(3000) })] }))
 	assert.equal(p.price, 25)
@@ -506,5 +529,85 @@ test('a company’s record reaches the storefront without the store’s own note
 	} finally {
 		delete globalThis.window
 		delete globalThis.document
+	}
+})
+
+// ---------------------------------------------------------------- 0.4.0: one storefront, every store
+
+test('a host under the base domain names its store; anything else names none', () => {
+	assert.equal(m.storeForHost('acme.shopnx.in', 'shopnx.in'), 'acme')
+	assert.equal(m.storeForHost('ACME.ShopNX.in.', 'shopnx.in'), 'acme', 'case and a trailing dot do not matter')
+	assert.equal(m.storeForHost('acme.shopnx.in:3000', 'shopnx.in'), 'acme', 'nor does a port')
+	assert.equal(m.storeForHost('shopnx.in', 'shopnx.in'), undefined, 'the base domain itself is no store')
+	assert.equal(m.storeForHost('a.b.shopnx.in', 'shopnx.in'), undefined, 'one label only, as the engine rules')
+	assert.equal(m.storeForHost('localhost', 'shopnx.in'), undefined)
+	assert.equal(m.storeForHost('acme.shopnx.in', undefined), undefined, 'no base domain, no mapping')
+	assert.equal(m.storeForHost('evilshopnx.in', 'shopnx.in'), undefined, 'a suffix match needs the dot')
+})
+
+test('X-Store follows the request host, not a process-wide value', async () => {
+	m.clearStoreCache()
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', baseDomain: 'shopnx.in', store: 'fallback' })
+	let host
+	m.setRequestHost(() => host)
+	const seen = []
+	const svc = new m.PageService(async (url, init) => {
+		seen.push(init.headers['X-Store'])
+		return Response.json({
+			data: { id: 1, slug: 'a', title: 'A', body: '', status: 'published', language: 'en', created_at: '', updated_at: '' },
+		})
+	})
+	try {
+		host = 'acme.shopnx.in'
+		await svc.getOne('a')
+		host = 'zed.shopnx.in'
+		await svc.getOne('a')
+		host = 'localhost'
+		await svc.getOne('a')
+		assert.deepEqual(seen, ['acme', 'zed', 'fallback'])
+	} finally {
+		m.setRequestHost(() => undefined)
+		m.BaseService.setCredentials({ baseDomain: undefined, store: undefined })
+	}
+})
+
+test('an unknown store under the base domain is a 404 the storefront can show', async () => {
+	m.clearStoreCache()
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', baseDomain: 'shopnx.in' })
+	m.setRequestHost(() => 'zz123.shopnx.in')
+	m.setStaticStore(() => ({ id: 'from_config', name: 'Shop', currency: { code: 'USD', symbol: '$' } }))
+	const svc = new m.StoreService(async () =>
+		Response.json({ error: { code: 'not_found', message: 'store not found' } }, { status: 404 }),
+	)
+	try {
+		await assert.rejects(
+			svc.getStoreByIdOrDomain({ domain: 'zz123.shopnx.in' }),
+			(err) => err instanceof m.GoCommerceError && err.status === 404 && /store not found/i.test(err.message),
+		)
+	} finally {
+		m.setRequestHost(() => undefined)
+		m.BaseService.setCredentials({ baseDomain: undefined })
+	}
+})
+
+test('a store the engine knows still renders, keyed apart from its neighbours', async () => {
+	m.clearStoreCache()
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', baseDomain: 'shopnx.in' })
+	m.setRequestHost(() => 'acme.shopnx.in')
+	m.setStaticStore(() => ({ id: 'from_config', name: 'Shop', currency: { code: 'USD', symbol: '$' } }))
+	const stores = []
+	const svc = new m.StoreService(async (url, init) => {
+		stores.push(init.headers['X-Store'])
+		if (String(url).endsWith('/health/ready')) return Response.json({ data: { currency: 'INR', language: 'en', version: 'x' } })
+		return Response.json({ data: [] })
+	})
+	try {
+		const store = await svc.getStoreByIdOrDomain({ domain: 'acme.shopnx.in' })
+		assert.equal(store.id, 'from_config')
+		assert.equal(store.currencyCode, 'INR')
+		assert.ok(stores.length > 0 && stores.every((s) => s === 'acme'), `every call named acme: ${stores}`)
+	} finally {
+		m.setRequestHost(() => undefined)
+		m.BaseService.setCredentials({ baseDomain: undefined })
 	}
 })

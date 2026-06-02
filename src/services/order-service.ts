@@ -3,7 +3,7 @@ import { GoCommerceError, NotSupportedError } from '../errors'
 import { toOrder } from '../map'
 import { toMajor } from '../money'
 import { inBrowser, placedOrder, placedOrderForCart, sessionToken } from '../browser'
-import { BaseService, emptyPage, toPage } from './base.service'
+import { BaseService, emptyPage, mediaUrl, toPage } from './base.service'
 
 /**
  * Orders, read back two ways.
@@ -81,7 +81,7 @@ export class OrderService extends BaseService {
 					productId: l.product_id,
 					variantId: l.variant_id,
 					title: l.title,
-					img: l.image_url ?? null,
+					img: mediaUrl(l.image_url),
 					price: toMajor(l.unit_price),
 					qty: l.quantity,
 				})
