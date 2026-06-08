@@ -98,8 +98,10 @@ import { setRequestHost } from '@misiki/gocommerce-connector'
 setRequestHost(() => getRequestEvent().url.hostname)
 ```
 
-Store-level facts (plugins, currency, menus) are cached per store, so two stores
-on one process never see each other's. A host under the base domain that names
+Each store renders with the name, email and phone its owner set in the panel
+(`GET /api/store`); the static record's values stand only where the owner left
+one empty. Store-level facts (name, plugins, currency, menus) are cached per
+store, so two stores on one process never see each other's. A host under the base domain that names
 a store the engine does not have makes `getStoreByIdOrDomain` throw a
 `GoCommerceError` with status 404 and "store not found" in its message, which
 Svelte Commerce renders as its own "Store not found" page. An engine that is

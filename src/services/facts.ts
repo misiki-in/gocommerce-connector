@@ -1,5 +1,5 @@
 import { remember } from '../cache'
-import type { Category, CheckoutOptions, Plugin } from '../engine'
+import type { Category, CheckoutOptions, Plugin, StoreProfile } from '../engine'
 import { BaseService } from './base.service'
 
 /**
@@ -31,6 +31,11 @@ export class StoreFacts extends BaseService {
 	/** The store's settlement currency and default language. */
 	ready(): Promise<{ currency: string; language: string; version: string }> {
 		return remember(this.key('ready'), () => this.data('/health/ready'))
+	}
+
+	/** The store's own name and how a buyer reaches it, as set in its panel. */
+	profile(): Promise<StoreProfile> {
+		return remember(this.key('profile'), () => this.data<StoreProfile>('/api/store'))
 	}
 
 	checkoutOptions(): Promise<CheckoutOptions> {
