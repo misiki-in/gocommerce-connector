@@ -86,7 +86,10 @@ to the domain the engine hands out subdomains of and point every
 `<slug>.<base domain>` at the one deployment: a request for `acme.shopnx.in` is
 sent to the engine with `X-Store: acme`, by the same rule the engine applies to
 its own host (one label, case-insensitive, a port ignored). A host outside the
-base domain falls back to `PUBLIC_GOCOMMERCE_STORE`, or to no store at all.
+base domain falls back to `PUBLIC_GOCOMMERCE_STORE`; without one it is sent as
+it is, `X-Store: chillish.in`, which the engine answers when a store has added
+and verified that domain. Point a store's own domain at this deployment and it
+shows that store.
 
 The browser knows its own host. The server does not, so tell the connector where
 to read it, once, from `src/hooks.server.ts`:

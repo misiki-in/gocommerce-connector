@@ -667,3 +667,254 @@ test('each store is priced in its own currency, not the install’s', async () =
 		m.BaseService.setCredentials({ baseDomain: undefined })
 	}
 })
+
+test("a store's own domain names it, after the subdomain and the static store", async () => {
+	m.clearStoreCache()
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', baseDomain: 'shopnx.in' })
+	let host
+	m.setRequestHost(() => host)
+	const seen = []
+	const svc = new m.PageService(async (url, init) => {
+		seen.push(init.headers['X-Store'])
+		return Response.json({
+			data: { id: 1, slug: 'a', title: 'A', body: '', status: 'published', language: 'en', created_at: '', updated_at: '' },
+		})
+	})
+	try {
+		for (host of ['Chillish.in.', 'www.chillish.in:443', 'acme.shopnx.in', 'shopnx.in', 'localhost', '127.0.0.1', '[::1]']) {
+			await svc.getOne('a')
+		}
+		assert.deepEqual(seen, ['chillish.in', 'www.chillish.in', 'acme', undefined, undefined, undefined, undefined])
+
+		// A storefront pinned to one store keeps it on any address.
+		m.BaseService.setCredentials({ store: 'pinned' })
+		seen.length = 0
+		host = 'chillish.in'
+		await svc.getOne('a')
+		assert.deepEqual(seen, ['pinned'])
+	} finally {
+		m.setRequestHost(() => undefined)
+		m.BaseService.setCredentials({ baseDomain: undefined, store: undefined })
+	}
+})
+
+test('a guest opens an order with a code, and the browser keeps it', async () => {
+	const store = {}
+	globalThis.window = {
+		location: { origin: 'http://storefront.test', hostname: 'storefront.test' },
+		localStorage: {
+			getItem: (k) => store[k] ?? null,
+			setItem: (k, v) => {
+				store[k] = v
+			},
+			removeItem: (k) => {
+				delete store[k]
+			},
+		},
+	}
+	globalThis.document = { cookie: '' }
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const seen = []
+	const order = {
+		id: 7, number: 'GC-000049', status: 'confirmed', payment_status: 'pending', payment_provider: 'cod', currency: 'INR',
+		subtotal: { amount_minor: 1000, currency: 'INR' }, total: { amount_minor: 1000, currency: 'INR' },
+		email: 'a@example.com', lines: [], fulfillments: [], address: {}, created_at: '', updated_at: '',
+	}
+	try {
+		const svc = new m.OrderService(async (url, init) => {
+			seen.push(`${init.method ?? 'GET'} ${url} ${init.body ?? ''}`)
+			if (url.endsWith('/code')) return Response.json({ data: { expires_in_minutes: 10 } }, { status: 202 })
+			if (url.endsWith('/code/verify')) return Response.json({ data: { order, access_token: 'tok_49' } })
+			return Response.json({ data: order })
+		})
+		const sent = await svc.requestOrderCode({ orderNo: ' GC-000049 ', contact: 'a@example.com' })
+		assert.equal(sent.expiresInMinutes, 10)
+		const res = await svc.getOrderByEmailAndOTP({ orderNo: 'GC-000049', otp: '0420' })
+		assert.equal(res.data[0].orderNo, 'GC-000049')
+		// Kept like an order placed here, so the order page reads it again.
+		await svc.getOrder('GC-000049')
+		assert.deepEqual(seen, [
+			'POST http://engine.test/api/orders/GC-000049/code {"contact":"a@example.com"}',
+			'POST http://engine.test/api/orders/GC-000049/code/verify {"code":"0420"}',
+			'GET http://engine.test/api/orders/GC-000049?token=tok_49 ',
+		])
+	} finally {
+		delete globalThis.window
+		delete globalThis.document
+		m.BaseService.setCredentials({ apiUrl: undefined })
+	}
+})
+
+test('a shopper signs in with a code texted to their phone', async () => {
+	const store = {}
+	globalThis.window = {
+		location: { origin: 'http://storefront.test', hostname: 'storefront.test' },
+		localStorage: {
+			getItem: (k) => store[k] ?? null,
+			setItem: (k, v) => {
+				store[k] = v
+			},
+			removeItem: (k) => {
+				delete store[k]
+			},
+		},
+	}
+	globalThis.document = { cookie: '' }
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	m.clearStoreCache()
+	const seen = []
+	try {
+		const svc = new m.AuthService(async (url, init) => {
+			seen.push(`${init.method ?? 'GET'} ${url} ${init.body ?? ''}`)
+			if (url.endsWith('/api/plugins')) {
+				return Response.json({ data: [{ key: 'identity', title: 'Customer sign-in', settings: { login_method: 'phone_otp' } }] })
+			}
+			if (url.endsWith('/x/identity/otp')) return Response.json({ data: { expires_in_minutes: 10 } }, { status: 202 })
+			return Response.json({
+				data: {
+					token: 'sess_1',
+					expires_at: new Date(Date.now() + 86400000).toISOString(),
+					record: { id: 9, email: '', email_verified: false, name: '', phone: '+919876543210', created_at: '', updated_at: '' },
+				},
+			})
+		})
+		assert.equal(await svc.loginMethod(), 'phone_otp')
+		await svc.getOtp({ phone: '+91 98765 43210' })
+		const me = await svc.verifyOtp({ phone: '+91 98765 43210', otp: '0420' })
+		assert.equal(me.phone, '+919876543210')
+		assert.ok(Object.values(store).includes('sess_1'), 'the session is kept in the browser')
+		assert.deepEqual(seen.slice(1, 3), [
+			'POST http://engine.test/x/identity/otp {"phone":"+91 98765 43210"}',
+			'POST http://engine.test/x/identity/otp/verify {"phone":"+91 98765 43210","code":"0420"}',
+		])
+	} finally {
+		delete globalThis.window
+		delete globalThis.document
+		m.BaseService.setCredentials({ apiUrl: undefined })
+	}
+})
+
+test('a store that says nothing signs in by email and password', async () => {
+	m.clearStoreCache()
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	try {
+		const svc = new m.AuthService(async () => Response.json({ data: [] }))
+		assert.equal(await svc.loginMethod(), 'email_password')
+	} finally {
+		m.BaseService.setCredentials({ apiUrl: undefined })
+	}
+})
+
+test('the sign-in form follows the way the store chose', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	m.setStaticStore(() => ({ id: 'from_config', name: 'Shop', loginType: 'BOTH' }))
+	let method
+	const svc = new m.StoreService(async (url) => {
+		if (String(url).endsWith('/api/checkout')) return Response.json({ data: { currency: 'INR', methods: [] } })
+		if (new URL(String(url)).pathname === '/api/plugins')
+			return Response.json({ data: method ? [{ key: 'identity', title: 'Customer sign-in', settings: { login_method: method } }] : [] })
+		return Response.json({ data: [] })
+	})
+	for (const [chosen, want] of [['phone_otp', 'PHONE'], ['email_password', 'EMAIL'], [undefined, 'BOTH']]) {
+		m.clearStoreCache()
+		method = chosen
+		const store = await svc.getStoreByIdOrDomain()
+		assert.equal(store.loginType, want, `login_method ${chosen}`)
+	}
+})
+
+test('the address form offers only the countries the store delivers to', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	m.setStaticStore(() => ({
+		id: 'from_config',
+		name: 'Shop',
+		country: { code: 'US', name: 'United States' },
+		countries: [
+			{ code: 'IN', name: 'India' },
+			{ code: 'US', name: 'United States' },
+		],
+	}))
+	let ships
+	const svc = new m.StoreService(async (url) => {
+		const path = new URL(String(url)).pathname
+		if (path === '/api/checkout') return Response.json({ data: { currency: 'INR', methods: [] } })
+		if (path === '/api/checkout/countries') return Response.json({ data: ships })
+		return Response.json({ data: [] })
+	})
+
+	m.clearStoreCache()
+	ships = { everywhere: false, countries: ['IN'] }
+	let store = await svc.getStoreByIdOrDomain()
+	assert.deepEqual(store.countries, [{ code: 'IN', name: 'India' }])
+	assert.equal(store.country.code, 'IN', 'the one country is the default')
+
+	m.clearStoreCache()
+	ships = { everywhere: false, countries: ['IN', 'NP'] }
+	store = await svc.getStoreByIdOrDomain()
+	assert.deepEqual(
+		store.countries.map((c) => c.code),
+		['IN', 'NP'],
+	)
+	assert.ok(store.countries[1].name, 'a country the static list lacks still has a name')
+	assert.equal(store.country.code, 'IN', 'a default the store does not deliver to gives way to the first it does')
+
+	m.clearStoreCache()
+	ships = { everywhere: true, countries: [] }
+	store = await svc.getStoreByIdOrDomain()
+	assert.equal(store.countries.length, 2, 'everywhere keeps the static list')
+})
+
+test('a signed-in shopper adds a phone with a code, and the account says it is verified', async () => {
+	const store = { gocommerce_token: 'sess_1' }
+	globalThis.window = {
+		location: { origin: 'http://storefront.test', hostname: 'storefront.test' },
+		localStorage: {
+			getItem: (k) => store[k] ?? null,
+			setItem: (k, v) => {
+				store[k] = v
+			},
+			removeItem: (k) => {
+				delete store[k]
+			},
+		},
+	}
+	globalThis.document = { cookie: '' }
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const seen = []
+	const record = { id: 9, email: 'ada@example.com', email_verified: false, name: 'Ada', phone: '+919876543210', phone_verified: true, created_at: '', updated_at: '' }
+	try {
+		const svc = new m.ProfileService(async (url, init) => {
+			seen.push(`${init.method ?? 'GET'} ${new URL(String(url)).pathname} ${init.body ?? ''}`)
+			if (String(url).endsWith('/me/phone')) return Response.json({ data: { expires_in_minutes: 10 } }, { status: 202 })
+			return Response.json({ data: record })
+		})
+		const sent = await svc.requestPhoneLink({ phone: '+91 98765 43210' })
+		assert.equal(sent.expiresInMinutes, 10)
+		const me = await svc.verifyPhoneLink({ phone: '+91 98765 43210', otp: '0420' })
+		assert.equal(me.phoneVerified, true)
+		assert.deepEqual(seen, [
+			'POST /x/identity/me/phone {"phone":"+91 98765 43210"}',
+			'POST /x/identity/me/phone/verify {"phone":"+91 98765 43210","code":"0420"}',
+		])
+	} finally {
+		delete globalThis.window
+		delete globalThis.document
+		m.BaseService.setCredentials({ apiUrl: undefined })
+	}
+})
+
+test('a store allowing email or phone offers both on the sign-in form', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	m.setStaticStore(() => ({ id: 'from_config', name: 'Shop', loginType: 'EMAIL' }))
+	m.clearStoreCache()
+	const svc = new m.StoreService(async (url) => {
+		const path = new URL(String(url)).pathname
+		if (path === '/api/checkout') return Response.json({ data: { currency: 'INR', methods: [] } })
+		if (path === '/api/plugins')
+			return Response.json({ data: [{ key: 'identity', title: 'Customer sign-in', settings: { login_method: 'email_or_phone' } }] })
+		return Response.json({ data: [] })
+	})
+	const store = await svc.getStoreByIdOrDomain()
+	assert.equal(store.loginType, 'BOTH')
+	assert.equal(await new m.AuthService(async (url) => Response.json({ data: [{ key: 'identity', title: '', settings: { login_method: 'email_or_phone' } }] })).loginMethod(), 'email_or_phone')
+})

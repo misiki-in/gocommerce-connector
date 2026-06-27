@@ -71,14 +71,16 @@ export class BaseService {
 
 	/**
 	 * The store this call is for: the request host's subdomain under
-	 * `baseDomain`, else the static `store`. Read per call, never stored on the
-	 * instance, because the server shares one process (and one credentials
-	 * object) across every concurrent request and each may be for a different host.
+	 * `baseDomain`, else the static `store`, else the host itself when it is a
+	 * store's own domain (the engine answers only a verified one). Read per call,
+	 * never stored on the instance, because the server shares one process (and
+	 * one credentials object) across every concurrent request and each may be
+	 * for a different host.
 	 */
 	protected get store(): string | undefined {
 		const { baseDomain, store } = this.creds
 		const host = typeof window !== 'undefined' ? window.location?.hostname : requestHost?.()
-		return storeForHost(host, baseDomain) ?? store
+		return storeForHost(host, baseDomain) ?? store ?? ownDomain(host, baseDomain)
 	}
 
 	/**
@@ -260,6 +262,21 @@ export function storeForHost(host: string | undefined, baseDomain: string | unde
 	if (!h.endsWith(suffix)) return undefined
 	const slug = h.slice(0, -suffix.length)
 	return slug && !slug.includes('.') ? slug : undefined
+}
+
+/**
+ * A host outside `baseDomain` is a store's own domain, such as `chillish.in`,
+ * which the engine looks up among its verified domains. Only a storefront
+ * serving many stores (one with a `baseDomain`) passes it on; the base domain
+ * itself, `localhost` and bare addresses are nobody's.
+ */
+export function ownDomain(host: string | undefined, baseDomain: string | undefined): string | undefined {
+	if (!host || !baseDomain) return undefined
+	const h = host.toLowerCase().replace(/:\d+$/, '').replace(/\.$/, '')
+	const base = baseDomain.toLowerCase().replace(/^\.+/, '').replace(/\.$/, '')
+	if (!h.includes('.') || h === base || h.endsWith('.' + base) || h.endsWith('.localhost')) return undefined
+	if (/^[\d.]+$/.test(h) || h.includes(':') || h.startsWith('[')) return undefined
+	return h
 }
 
 /** A refused connection is the commonest failure in development; it says which address did not answer. */
