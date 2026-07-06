@@ -36,10 +36,11 @@ engine's routes start with `/api` too.
 
 ### The engine
 
-Start it with the modules the storefront has screens for:
+Start it with the modules the storefront has screens for. The flags go before
+`serve`; the engine ignores any that come after it.
 
 ```bash
-gocommerce serve -identity -wishlist -reviews -cms -faq -menus
+gocommerce -identity -wishlist -reviews -cms -faq -menus serve
 ```
 
 Each is optional. Without `-identity` there is no sign-in (guest checkout
@@ -50,11 +51,19 @@ business buyers (see "Beyond the storefront's screens").
 
 ### The browser and CORS
 
-The engine sends no CORS headers, so a browser on the storefront's origin cannot
-read a response from the engine's. Server-side rendering is unaffected; it is
-the bag, sign-in and checkout — which run in the browser — that need a route.
+The engine sends CORS headers only to the origins listed in
+`GOCOMMERCE_CORS_ORIGINS` (comma-separated, or `*` for any). Unset, a browser on
+the storefront's origin cannot read a response from the engine's. Server-side
+rendering is unaffected; it is the bag, sign-in and checkout — which run in the
+browser — that need a route.
 
-Proxy a path on the storefront's own origin to the engine and name it in
+The simplest is to list the storefront's origin when starting the engine,
+`GOCOMMERCE_CORS_ORIGINS=https://shop.example`, and leave
+`PUBLIC_GOCOMMERCE_PROXY_PATH` unset. The browser then calls
+`PUBLIC_GOCOMMERCE_API_URL` directly, so that has to be an address the
+shopper's browser can reach.
+
+Or proxy a path on the storefront's own origin to the engine and name it in
 `PUBLIC_GOCOMMERCE_PROXY_PATH`. The browser then calls
 `https://shop.example/gocommerce/api/carts`, and the server keeps calling
 `PUBLIC_GOCOMMERCE_API_URL` directly. With Caddy:
@@ -129,6 +138,9 @@ down stays best-effort: the storefront renders from its static record.
 | reviews | `/x/reviews` |
 | content pages (`/p/…`, legal pages) | `/x/cms/pages` |
 | FAQ | `/x/faq` |
+| composed home page | `/x/layouts/home` (`?preview=` for a draft) — `layoutService.getHomeLayout()`, null when the store has none; carries `themeSettings` and each collection list's `collections` |
+| product and collection templates | `/x/layouts/product`, `/x/layouts/collection` (`?preview=` for a draft) — `layoutService.getProductLayout()` and `getCollectionLayout()`, the sections the shop arranged around the page's core (`main-product`, `main-collection`); null when none is published, and the page draws as before |
+| theme settings | `/x/layouts/theme` (`?preview=` for a draft) — `layoutService.getThemeSettings()`, the store's colours, fonts and rounding for every page; null when there are none |
 | menus | `/x/navigation/menus/{header,footer}`, laid over `store.menu`; any menu by handle |
 | product specs table | the product's category attribute answers |
 | attribute filters (`?attributes.color=Red`) | `/api/products?attr=color:Red` |
@@ -213,13 +225,13 @@ Each of these is a real gap, listed so nobody has to find it in production.
   `checkoutService.checkout(code)` for a storefront that drives its own payment
   UI. Payment is confirmed by the gateway's webhook to the engine; the order
   shows `paymentStatus` once it lands.
-- **Attribute filters inside a category.** The engine filters by attribute on
-  the whole-shop listing only; on a category page they are not applied.
+- **Filters on an older engine.** Listing filters and their counts (tags,
+  vendor, product type, category attributes, price) need an engine that counts
+  them (`GET /api/products?facets=1`, D130). Against an older one the filter
+  rail is empty and a category page's attribute filters are not applied.
 - **Tax in the bag.** The engine's cart carries no tax or total; tax is computed
   when the order is placed. The bag shows subtotal − discount + delivery, and the
   order shows the real figures.
-- **Facets.** The engine's search returns hits and a total, not distributions, so
-  category and tag facets and the price slider are not shown.
 - **Phone sign-in by code, account deletion, guest order lookup by email and
   code** are not engine features and throw.
 
@@ -247,7 +259,7 @@ real one, seeding what they need through the admin API under names unique to
 the run:
 
 ```bash
-gocommerce serve -admin-token dev-token -identity -wishlist -reviews -cms -faq -menus -newsletter -contact -b2b
+gocommerce -admin-token dev-token -identity -wishlist -reviews -cms -faq -menus -newsletter -contact -b2b serve
 GOCOMMERCE_URL=http://127.0.0.1:8080 GOCOMMERCE_ADMIN_TOKEN=dev-token \
 GOCOMMERCE_TEST_DB=postgres://…/the-stores-database npm test
 ```

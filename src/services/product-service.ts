@@ -77,16 +77,49 @@ export class ProductService extends CatalogService {
 		return this.shelf('trending', { page, limit })
 	}
 
-	/** More from this product's category. */
+	/**
+	 * More like this product. Given `product` (a slug or id), it is the
+	 * product's category first, then its collections, then the newest — never
+	 * the product itself. Many shops never fill in categories, and an empty
+	 * rail under every product page reads as a broken shop.
+	 *
+	 * Without `product`, it is the old answer: more from `categoryId`.
+	 */
 	async listRelatedProducts({
 		page = 1,
 		categoryId,
+		product,
 		limit,
-	}: { page?: number; categoryId?: string; limit?: number } = {}) {
+	}: { page?: number; categoryId?: string; product?: string; limit?: number } = {}) {
+		if (product) return this.relatedTo(String(product), limit)
 		if (!categoryId) return this.list({ page, limit })
 		const category = (await this.facts.categories()).find((c) => String(c.id) === String(categoryId))
 		if (!category) return this.list({ page, limit })
 		return this.list({ page, limit, categories: category.slug })
+	}
+
+	private async relatedTo(slug: string, limit?: number) {
+		const size = Math.min(100, Math.max(1, Number(limit) || PAGE_SIZE))
+		const p = await this.findProduct(slug)
+		const self = String(p.id)
+		// The listing answers either the engine's cards or the search index's,
+		// so all a pick needs to know is the id.
+		const picked = new Map<string, { id: string }>()
+		const add = (rows: readonly { id: string }[]) => {
+			for (const r of rows) {
+				if (picked.size >= size) return
+				if (r.id !== self && !picked.has(r.id)) picked.set(r.id, r)
+			}
+		}
+		// One more than needed, since the product itself may be among them.
+		if (p.category) add((await this.list({ limit: size + 1, categories: p.category.slug })).data)
+		for (const c of p.collections ?? []) {
+			if (picked.size >= size) break
+			add((await this.shelf(c.slug, { page: 1, limit: size + 1 })).data)
+		}
+		if (picked.size < size) add((await this.list({ limit: size + 1 })).data)
+		const data = [...picked.values()]
+		return { data, count: data.length, pageSize: size, noOfPage: 1, page: 1 }
 	}
 
 	private async shelf(slug: string, { page, sort, limit }: { page: number; sort?: string; limit?: number }) {

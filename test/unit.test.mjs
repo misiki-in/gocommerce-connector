@@ -296,6 +296,8 @@ test('every service the storefront imports by name is exported', () => {
 		'storeService',
 		'menuService',
 		'pageService',
+		'layoutService',
+		'LayoutService',
 		'faqService',
 		'FaqService',
 		'searchService',
@@ -745,6 +747,54 @@ test('a guest opens an order with a code, and the browser keeps it', async () =>
 	}
 })
 
+test('a guest opens an order with its number and email, or the key in their email link', async () => {
+	const store = {}
+	globalThis.window = {
+		location: { origin: 'http://storefront.test', hostname: 'storefront.test' },
+		localStorage: {
+			getItem: (k) => store[k] ?? null,
+			setItem: (k, v) => {
+				store[k] = v
+			},
+			removeItem: (k) => {
+				delete store[k]
+			},
+		},
+	}
+	globalThis.document = { cookie: '' }
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const seen = []
+	const order = (number) => ({
+		id: 7, number, status: 'confirmed', payment_status: 'pending', payment_provider: 'cod', currency: 'INR',
+		subtotal: { amount_minor: 1000, currency: 'INR' }, total: { amount_minor: 1000, currency: 'INR' },
+		email: 'a@example.com', lines: [], fulfillments: [], address: {}, created_at: '', updated_at: '',
+	})
+	try {
+		const svc = new m.OrderService(async (url, init) => {
+			seen.push(`${init.method ?? 'GET'} ${url} ${init.body ?? ''}`)
+			if (url.endsWith('/open')) return Response.json({ data: { order: order('GC-000050'), access_token: 'tok_50' } })
+			return Response.json({ data: order(url.includes('GC-000004') ? 'GC-000004' : 'GC-000050') })
+		})
+		const opened = await svc.openOrder({ orderNo: ' GC-000050 ', contact: ' a@example.com ' })
+		assert.equal(opened.data[0].orderNo, 'GC-000050')
+		await svc.getOrder('GC-000050')
+		const linked = await svc.openOrderWithKey({ orderNo: 'GC-000004', key: 'key_4' })
+		assert.equal(linked.data[0].orderNo, 'GC-000004')
+		// Kept like an order placed here, so the order page reads it again.
+		await svc.getOrder('GC-000004')
+		assert.deepEqual(seen, [
+			'POST http://engine.test/api/orders/GC-000050/open {"contact":"a@example.com"}',
+			'GET http://engine.test/api/orders/GC-000050?token=tok_50 ',
+			'GET http://engine.test/api/orders/GC-000004?token=key_4 ',
+			'GET http://engine.test/api/orders/GC-000004?token=key_4 ',
+		])
+	} finally {
+		delete globalThis.window
+		delete globalThis.document
+		m.BaseService.setCredentials({ apiUrl: undefined })
+	}
+})
+
 test('a shopper signs in with a code texted to their phone', async () => {
 	const store = {}
 	globalThis.window = {
@@ -784,7 +834,7 @@ test('a shopper signs in with a code texted to their phone', async () => {
 		assert.equal(me.phone, '+919876543210')
 		assert.ok(Object.values(store).includes('sess_1'), 'the session is kept in the browser')
 		assert.deepEqual(seen.slice(1, 3), [
-			'POST http://engine.test/x/identity/otp {"phone":"+91 98765 43210"}',
+			'POST http://engine.test/x/identity/otp {"phone":"+91 98765 43210","domain":"storefront.test"}',
 			'POST http://engine.test/x/identity/otp/verify {"phone":"+91 98765 43210","code":"0420"}',
 		])
 	} finally {
@@ -942,4 +992,330 @@ test('a new phone asks "already have an account?" before one opens (D123)', asyn
 
 	await svc.login({ email: 'ada@example.com', password: 'pw' })
 	assert.deepEqual(calls[3].body, { email: 'ada@example.com', password: 'pw' })
+})
+
+test('a sign-in code names the site it is asked from, for Chrome to fill it in (D124)', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const bodies = []
+	const svc = new m.AuthService(async (_url, init) => {
+		bodies.push(JSON.parse(init.body))
+		return new Response(JSON.stringify({ data: { expires_in_minutes: 10 } }), { status: 202, headers: { 'Content-Type': 'application/json' } })
+	})
+	await svc.getOtp({ phone: '+919876543210', domain: 'chillish.in' })
+	await svc.getOtp({ phone: '+919876543210' })
+	assert.deepEqual(bodies, [{ phone: '+919876543210', domain: 'chillish.in' }, { phone: '+919876543210' }])
+})
+
+// ---------------------------------------------------------------- composed home page (ext/layouts)
+
+test('a published home layout keeps its order and settings, and its grids carry storefront products', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: '' })
+	const seen = []
+	const svc = new m.LayoutService(async (url) => {
+		seen.push(url)
+		return Response.json({
+			data: {
+				page: 'home',
+				theme: 'default',
+				revision: 3,
+				sections: [
+					{ id: 'a', type: 'announcement-bar', settings: { text: 'Free shipping', link: '/sale' } },
+					{ id: 'h', type: 'hero', settings: { heading: 'New in', image: '/media/hero.jpg', mobile_image: 'https://cdn.example/m.jpg' } },
+					{ id: 'g', type: 'product-grid', settings: { heading: 'Best sellers', columns: 4 }, products: [product()] },
+					{ id: 'e', type: 'product-grid', settings: { heading: 'Empty' } },
+					{ id: 'x', type: 'from-the-future', settings: { anything: 1 } },
+				],
+			},
+		})
+	})
+	const layout = await svc.getHomeLayout()
+	assert.equal(seen[0], 'http://engine.test/x/layouts/home', 'no preview asked for, none sent')
+	assert.equal(layout.revision, 3)
+	assert.equal(layout.preview, false)
+	assert.deepEqual(layout.sections.map((s) => s.type), ['announcement-bar', 'hero', 'product-grid', 'product-grid', 'from-the-future'])
+	assert.deepEqual(layout.sections[0].settings, { text: 'Free shipping', link: '/sale' })
+	assert.equal(layout.sections[1].settings.image, 'http://engine.test/media/hero.jpg', 'an upload is loaded from the engine')
+	assert.equal(layout.sections[1].settings.mobile_image, 'https://cdn.example/m.jpg')
+	assert.equal(layout.sections[1].products, undefined)
+	const [card] = layout.sections[2].products
+	assert.equal(card.id, '7')
+	assert.equal(card.price, 25, 'mapped like a collection product: major units')
+	assert.equal(card.link, '/products/cotton-tee')
+	assert.deepEqual(layout.sections[3].products, [])
+	assert.deepEqual(layout.sections[4].settings, { anything: 1 }, 'an unknown type passes through for the storefront to skip')
+})
+
+test('a preview key asks for the draft', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const seen = []
+	const svc = new m.LayoutService(async (url) => {
+		seen.push(url)
+		return Response.json({ data: { page: 'home', theme: 'default', preview: true, sections: [] } })
+	})
+	const layout = await svc.getHomeLayout({ preview: 'k3y' })
+	assert.equal(seen[0], 'http://engine.test/x/layouts/home?preview=k3y')
+	assert.equal(layout.preview, true)
+	assert.deepEqual(layout.sections, [])
+})
+
+test('no layout — plugin off, nothing published, a bad key or no module — is null, and other failures still throw', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const missing = new m.LayoutService(async () =>
+		Response.json({ error: { code: 'not_found', message: 'no published layout' } }, { status: 404 }),
+	)
+	assert.equal(await missing.getHomeLayout(), null)
+	assert.equal(await missing.getHomeLayout({ preview: 'expired' }), null)
+	const noRoute = new m.LayoutService(async () => new Response('', { status: 404 }))
+	assert.equal(await noRoute.getHomeLayout(), null)
+	const broken = new m.LayoutService(async () =>
+		Response.json({ error: { code: 'internal', message: 'boom' } }, { status: 500 }),
+	)
+	await assert.rejects(broken.getHomeLayout(), (err) => err instanceof m.GoCommerceError && err.status === 500)
+})
+
+test('a layout carries its theme settings, its nested uploads and its collection cards', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: '' })
+	const svc = new m.LayoutService(async () =>
+		Response.json({
+			data: {
+				page: 'home',
+				theme: 'default',
+				revision: 4,
+				theme_settings: { accent: '#aa3300', body_font: 'lora' },
+				sections: [
+					{ id: 's', type: 'slideshow', settings: { slides: [{ image: '/media/s1.jpg', mobile_image: '/media/s1m.jpg', heading: '/media/words' }, { image: 'https://cdn.example/s2.jpg' }] } },
+					{ id: 'v', type: 'video', settings: { video_file: '/media/v.mp4', poster: '/media/v.jpg' } },
+					{ id: 'c', type: 'collection-list', settings: { collections: [2, 1] }, collections: [{ id: 2, slug: 'rings', title: 'Rings', image: '/media/r.jpg' }, { id: 1, slug: 'chains', title: 'Chains' }] },
+					{ id: 'e', type: 'collection-list', settings: {} },
+				],
+			},
+		}),
+	)
+	const layout = await svc.getHomeLayout()
+	assert.deepEqual(layout.themeSettings, { accent: '#aa3300', body_font: 'lora' })
+	const slides = layout.sections[0].settings.slides
+	assert.equal(slides[0].image, 'http://engine.test/media/s1.jpg', 'an upload inside a list is loaded from the engine')
+	assert.equal(slides[0].mobile_image, 'http://engine.test/media/s1m.jpg')
+	assert.equal(slides[0].heading, '/media/words', 'only picture and video settings are addresses')
+	assert.equal(slides[1].image, 'https://cdn.example/s2.jpg')
+	assert.equal(layout.sections[1].settings.video_file, 'http://engine.test/media/v.mp4')
+	assert.equal(layout.sections[1].settings.poster, 'http://engine.test/media/v.jpg')
+	assert.deepEqual(layout.sections[2].collections, [
+		{ id: '2', title: 'Rings', slug: 'rings', link: '/collections/rings', image: 'http://engine.test/media/r.jpg' },
+		{ id: '1', title: 'Chains', slug: 'chains', link: '/collections/chains', image: null },
+	])
+	assert.deepEqual(layout.sections[3].collections, [])
+})
+
+test('a layout without theme settings says so with null', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const svc = new m.LayoutService(async () => Response.json({ data: { page: 'home', theme: 'default', sections: [] } }))
+	assert.equal((await svc.getHomeLayout()).themeSettings, null)
+})
+
+test('the theme settings come alone for every page, and a preview key asks for the draft', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const seen = []
+	const svc = new m.LayoutService(async (url) => {
+		seen.push(url)
+		return Response.json({ data: { revision: 2, settings: { radius: 'large' } } })
+	})
+	assert.deepEqual(await svc.getThemeSettings(), { revision: 2, preview: false, settings: { radius: 'large' } })
+	assert.equal(seen[0], 'http://engine.test/x/layouts/theme')
+	await svc.getThemeSettings({ preview: 'k3y' })
+	assert.equal(seen[1], 'http://engine.test/x/layouts/theme?preview=k3y')
+
+	const missing = new m.LayoutService(async () => Response.json({ error: { code: 'not_found', message: 'none' } }, { status: 404 }))
+	assert.equal(await missing.getThemeSettings(), null, 'nothing published, or the editor off: the storefront keeps its look')
+	const broken = new m.LayoutService(async () => Response.json({ error: { code: 'internal', message: 'boom' } }, { status: 500 }))
+	assert.equal(await broken.getThemeSettings(), null, 'a failure costs the look, never the page')
+})
+
+// ---------------------------------------------------------------- product and collection templates (ext/layouts, D128)
+
+test('the product page template keeps its core where the shop put it, and its own sections', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: '' })
+	const seen = []
+	const svc = new m.LayoutService(async (url) => {
+		seen.push(url)
+		return Response.json({
+			data: {
+				page: 'product',
+				theme: 'default',
+				revision: 2,
+				sections: [
+					{ id: 'h', type: 'hero', settings: { heading: 'Made by hand', image: '/media/h.jpg' } },
+					{ id: 'product', type: 'main-product', settings: {} },
+					{ id: 'r', type: 'product-reviews', settings: null },
+					{ id: 'rel', type: 'related-products', settings: { heading: 'You may also like' } },
+					{ id: 'g', type: 'product-grid', settings: { heading: 'Pairs well with' }, products: [product()] },
+				],
+			},
+		})
+	})
+	const layout = await svc.getProductLayout()
+	assert.equal(seen[0], 'http://engine.test/x/layouts/product')
+	assert.equal(layout.page, 'product')
+	assert.equal(layout.revision, 2)
+	assert.deepEqual(layout.sections.map((s) => s.type), ['hero', 'main-product', 'product-reviews', 'related-products', 'product-grid'])
+	assert.equal(layout.sections[0].settings.image, 'http://engine.test/media/h.jpg')
+	assert.deepEqual(layout.sections[1].settings, {}, 'the core carries no settings: the catalogue draws it')
+	assert.deepEqual(layout.sections[2].settings, {}, 'a null settings object is an empty one')
+	assert.equal(layout.sections[3].settings.heading, 'You may also like')
+	assert.equal(layout.sections[4].products[0].link, '/products/cotton-tee')
+	assert.equal(layout.themeSettings, null, 'the design tokens come with the home page, not with a template')
+})
+
+test('the collection page template and its preview', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const seen = []
+	const svc = new m.LayoutService(async (url) => {
+		seen.push(url)
+		return Response.json({ data: { page: 'collection', theme: 'default', preview: true, sections: [{ id: 'products', type: 'main-collection', settings: {} }] } })
+	})
+	const layout = await svc.getCollectionLayout({ preview: 'k3y' })
+	assert.equal(seen[0], 'http://engine.test/x/layouts/collection?preview=k3y')
+	assert.equal(layout.preview, true)
+	assert.deepEqual(layout.sections.map((s) => s.id), ['products'])
+	await svc.getProductLayout({ preview: '  ' })
+	assert.equal(seen[1], 'http://engine.test/x/layouts/product', 'a blank key is no key')
+})
+
+test('no template published, the editor off, or an engine without templates: null, so the page draws as before', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const missing = new m.LayoutService(async () => Response.json({ error: { code: 'not_found', message: 'the product page has not been published' } }, { status: 404 }))
+	assert.equal(await missing.getProductLayout(), null)
+	assert.equal(await missing.getCollectionLayout({ preview: 'expired' }), null)
+	const older = new m.LayoutService(async () => new Response('', { status: 404 }))
+	assert.equal(await older.getCollectionLayout(), null)
+	const broken = new m.LayoutService(async () => Response.json({ error: { code: 'internal', message: 'boom' } }, { status: 500 }))
+	await assert.rejects(broken.getProductLayout(), (err) => err instanceof m.GoCommerceError && err.status === 500)
+})
+
+// ---------------------------------------------------------------- related products
+
+// A shop that never filled in categories still shows related products: the
+// product's own category first, then its collections, then the newest — never
+// the product itself, and never the same product twice.
+test('related products fall back from the category to the collections to the newest', async () => {
+	m.clearStoreCache()
+	const p = (id) => product({ id, slug: `p${id}` })
+	const answer = (path) => {
+		if (path === '/api/products/slug/p1') {
+			return { data: p(1) }
+		}
+		if (path === '/api/products/slug/p2') {
+			return { data: product({ id: 2, slug: 'p2', category: null, collections: [{ id: 5, slug: 'gifts', title: 'Gifts' }] }) }
+		}
+		if (path === '/api/products/slug/p3') {
+			return { data: product({ id: 3, slug: 'p3', category: null, collections: [] }) }
+		}
+		if (path === '/api/categories') return { data: [{ id: 3, parent_id: null, slug: 'shirts', title: 'Shirts', position: 0, full_name: 'Shirts', depth: 0, child_count: 0 }] }
+		if (path === '/api/categories/shirts') return { data: { products: [p(1), p(4)] }, meta: { total: 2, page: 1, limit: 13, total_pages: 1 } }
+		if (path === '/api/collections/gifts') return { data: { products: [p(2), p(6)] }, meta: { total: 2, page: 1, limit: 13, total_pages: 1 } }
+		if (path === '/api/products') return { data: [p(9), p(6), p(3), p(4), p(1)], meta: { total: 5, page: 1, limit: 13, total_pages: 1 } }
+		return null
+	}
+	const svc = new m.ProductService(async (url) => {
+		const body = answer(new URL(String(url)).pathname)
+		return body ? Response.json(body) : Response.json({ error: { code: 'not_found', message: 'nope' } }, { status: 404 })
+	})
+	const ids = async (slug) => (await svc.listRelatedProducts({ product: slug, limit: 12 })).data.map((x) => x.id)
+
+	assert.deepEqual(await ids('p1'), ['4', '9', '6', '3'], 'its category, then the newest, without itself')
+	assert.deepEqual(await ids('p2'), ['6', '9', '3', '4', '1'], 'no category: its collection, then the newest')
+	assert.deepEqual(await ids('p3'), ['9', '6', '4', '1'], 'nothing to go on: the newest')
+	assert.equal((await svc.listRelatedProducts({ product: 'p3', limit: 2 })).data.length, 2, 'the limit holds')
+})
+
+// ---------------------------------------------------------------- listing facets
+
+/** An engine that answers the store, the category tree and the listing; `facets` is what its listing counts, or nothing. */
+function listingEngine(base, facets) {
+	const asked = []
+	const fetch = async (url) => {
+		const u = new URL(url)
+		if (u.pathname === '/api/checkout') return Response.json({ data: { currency: 'INR' } })
+		if (u.pathname === '/api/store') return Response.json({ data: { language: 'en' } })
+		if (u.pathname === '/api/categories') return Response.json({ data: [{ id: 1, slug: 'rings', title: 'Rings', parent_id: null }] })
+		asked.push(u)
+		const meta = { total: 1, limit: 24, offset: 0, page: 1, total_pages: 1, ...(facets && u.searchParams.get('facets') ? { facets } : {}) }
+		if (u.pathname === '/api/categories/rings') return Response.json({ data: { products: [product()] }, meta })
+		return Response.json({ data: [product()], meta })
+	}
+	m.BaseService.setCredentials({ apiUrl: base })
+	return { svc: new m.SearchService(fetch), asked }
+}
+
+test('every filter the storefront writes reaches the engine, and its counts come back in the rail’s shape', async () => {
+	const { svc, asked } = listingEngine('http://facets.test', {
+		price: { min: money(150000, 'INR'), max: money(1299950, 'INR') },
+		tags: [{ value: 'bridal', count: 4 }],
+		vendors: [{ value: 'Acme', count: 3 }],
+		product_types: [],
+		categories: [{ id: 1, slug: 'rings', title: 'Rings', count: 4 }],
+		attributes: { metal: [{ value: 'Gold', count: 2 }, { value: 'Silver, sterling', count: 1 }] },
+	})
+	const res = await svc.searchWithUrl(
+		new URL(
+			'http://storefront.test/rings?tags=bridal,daily&vendor=Acme&product_type=Ring&attributes.metal=Gold%2CSilver&priceFrom=1500&priceTo=12999.5&sort=-price&search=band',
+		),
+		'rings',
+	)
+	assert.equal(asked.length, 1, 'one request answers the whole page')
+	const q = asked[0].searchParams
+	assert.equal(asked[0].pathname, '/api/products')
+	assert.deepEqual(
+		{
+			q: q.get('q'),
+			category: q.get('category'),
+			tag: q.getAll('tag'),
+			vendor: q.getAll('vendor'),
+			product_type: q.getAll('product_type'),
+			attr: q.getAll('attr'),
+			price_min: q.get('price_min'),
+			price_max: q.get('price_max'),
+			sort: q.get('sort'),
+			order: q.get('order'),
+			facets: q.get('facets'),
+		},
+		{
+			q: 'band',
+			category: 'rings',
+			tag: ['bridal', 'daily'],
+			vendor: ['Acme'],
+			product_type: ['Ring'],
+			attr: ['metal:Gold', 'metal:Silver'],
+			price_min: '150000',
+			price_max: '1299950',
+			sort: 'price',
+			order: 'desc',
+			facets: '1',
+		},
+	)
+	assert.deepEqual(res.facets, {
+		priceStat: { min: 1500, max: 12999.5 },
+		categories: [{ name: 'Rings', slug: 'rings', count: 4 }],
+		tags: [{ name: 'bridal', count: 4 }],
+		allFilters: { vendor: { Acme: 3 }, 'attributes.metal': { Gold: 2, 'Silver, sterling': 1 } },
+	})
+	assert.deepEqual(res.categoryHierarchy, [{ name: 'Rings', slug: 'rings' }])
+})
+
+test('an engine that does not count facets is asked the old way, once, and the rail stays empty', async () => {
+	const { svc, asked } = listingEngine('http://old-engine.test', null)
+	const first = await svc.searchWithUrl(new URL('http://storefront.test/rings'), 'rings')
+	assert.deepEqual(
+		asked.map((u) => u.pathname),
+		['/api/products', '/api/categories/rings'],
+	)
+	assert.deepEqual(first.facets, { priceStat: {}, categories: [], tags: [], allFilters: {} })
+	assert.equal(first.count, 1)
+	asked.length = 0
+	await svc.searchWithUrl(new URL('http://storefront.test/rings'), 'rings')
+	assert.deepEqual(
+		asked.map((u) => u.pathname),
+		['/api/categories/rings'],
+		'remembered: no second wasted request',
+	)
 })

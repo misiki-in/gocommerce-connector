@@ -238,11 +238,16 @@ export class AuthService extends UserService {
 		}
 	}
 
-	/** Texts a 4-digit sign-in code to `phone`, which needs its country code. */
-	async getOtp({ phone }: { phone: string }) {
+	/**
+	 * Texts a 4-digit sign-in code to `phone`, which needs its country code. `domain`, the page's
+	 * host and in the browser read from it, lets the engine end the text "@domain #code" when the
+	 * host is the store's own, which Chrome on Android reads to fill the code in (D124).
+	 */
+	async getOtp({ phone, domain }: { phone: string; domain?: string }) {
+		const site = domain ?? (typeof window !== 'undefined' ? window.location?.hostname : undefined)
 		const res = await this.account<{ expires_in_minutes: number }>('/x/identity/otp', {
 			method: 'POST',
-			body: { phone: String(phone ?? '').trim() },
+			body: { phone: String(phone ?? '').trim(), ...(site ? { domain: site } : {}) },
 		})
 		return { expiresInMinutes: res?.expires_in_minutes ?? 10 }
 	}

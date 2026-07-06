@@ -7,7 +7,27 @@
  */
 import type { Money } from './money'
 
-export type ListMeta = { total: number; limit: number; offset: number; page: number; total_pages: number }
+export type ListMeta = {
+	total: number
+	limit: number
+	offset: number
+	page: number
+	total_pages: number
+	/** Only on `GET /api/products?facets=1`, from an engine that counts them (D130). */
+	facets?: ProductFacets
+}
+
+export type FacetValue = { value: string; count: number }
+
+/** core/catalog_facets.go: counted over the whole listing, each group without its own selection. */
+export type ProductFacets = {
+	price: { min: Money; max: Money } | null
+	tags: FacetValue[] | null
+	vendors: FacetValue[] | null
+	product_types: FacetValue[] | null
+	categories: { id: number; slug: string; title: string; count: number }[] | null
+	attributes: Record<string, FacetValue[]> | null
+}
 
 export type Envelope<T> = { data: T; meta?: ListMeta }
 
