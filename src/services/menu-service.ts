@@ -61,21 +61,40 @@ export class MenuService extends BaseService {
 		return { menuId: m.handle, name: m.title, items: (m.items ?? []).map(toItem) }
 	}
 
-	/** The header and footer menus, or `null` when the module is not there. Cached: a menu is store-level. */
+	/**
+	 * The header and footer menus, or `null` when the module is not there. Cached: a menu is
+	 * store-level. Each is the menu the shop chose for it in the theme editor's header or footer
+	 * (GoCommerce D131), still under the `header` / `footer` id every storefront looks for, so the
+	 * choice reaches every place that draws one; the menus named so are the default.
+	 */
 	async engineMenus(): Promise<StorefrontMenu[] | null> {
 		if (!(await this.facts.pluginOn('navigation'))) return null
 		return remember(`${this.engineBase()}|${this.store ?? ''}|menus`, async () => {
 			const out: StorefrontMenu[] = []
-			for (const handle of ['header', 'footer']) {
+			for (const part of ['header', 'footer'] as const) {
 				try {
-					const m = await this.data<Menu>(`/x/navigation/menus/${handle}`)
-					out.push({ menuId: handle, name: m.title, items: (m.items ?? []).map(toItem) })
+					const handle = await this.chosenMenu(part)
+					const m = await this.data<Menu>(`/x/navigation/menus/${encodeURIComponent(handle)}`)
+					out.push({ menuId: part, name: m.title, items: (m.items ?? []).map(toItem) })
 				} catch {
 					// A store may have deleted one of the two.
 				}
 			}
 			return out
 		}).catch(() => null)
+	}
+
+	/** The handle of the menu the published header or footer names, else the part's own name. */
+	private async chosenMenu(part: 'header' | 'footer'): Promise<string> {
+		if (!(await this.facts.pluginOn('layouts'))) return part
+		try {
+			const layout = await this.data<{ sections?: { type: string; settings?: { menu?: unknown } | null }[] | null }>(`/x/layouts/${part}`)
+			const menu = layout?.sections?.find((s) => s.type === part)?.settings?.menu
+			return typeof menu === 'string' && menu ? menu : part
+		} catch {
+			// Nothing published, or an engine without the editor.
+			return part
+		}
 	}
 }
 

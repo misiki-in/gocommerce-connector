@@ -2,6 +2,7 @@ import type { Product } from '../engine'
 import { GoCommerceError } from '../errors'
 import { toProduct, type StorefrontProduct } from '../map'
 import { BaseService, mediaUrl } from './base.service'
+import { MenuService, type StorefrontMenu } from './menu-service'
 
 /** A collection list's card, as the engine resolves it. */
 type EngineLayoutCollection = {
@@ -70,7 +71,7 @@ export type HomeLayoutSection = {
  * or `main-collection` (the collection's grid) — at the place the shop put
  * it, and the storefront draws its own core there.
  */
-export type LayoutPage = 'home' | 'product' | 'collection'
+export type LayoutPage = 'home' | 'product' | 'collection' | 'header' | 'footer'
 
 export type HomeLayout = {
 	page: string
@@ -93,6 +94,51 @@ export type ThemeSettingsResult = {
 	preview: boolean
 	settings: ThemeSettings
 }
+
+/**
+ * The header's settings as the shop set them (ext/layouts, D131): the strip
+ * above the header — shown or not, its words, its link, and whether it is on
+ * every page or the home page only — and the handle of the menu across it.
+ * Plain text, and a link that is `/path` or `http(s)://`.
+ */
+export type HeaderSettings = {
+	show_announcement?: boolean
+	announcement_text?: string
+	announcement_link?: string
+	announcement_pages?: 'all' | 'home'
+	menu?: string
+}
+
+/** A footer's link to the shop's page on a social network; `url` is always `http(s)://`. */
+export type SocialLink = { network: 'instagram' | 'facebook' | 'x' | 'youtube' | 'pinterest' | 'linkedin' | 'whatsapp' | 'telegram'; url: string }
+
+/**
+ * The footer's settings (D131): the handle of the menu whose top-level links
+ * become its columns, a few words about the shop, whether the newsletter
+ * sign-up shows (absent while the newsletter is off), social links and the
+ * copyright line. An absent one means the storefront keeps its own.
+ */
+export type FooterSettings = {
+	menu?: string
+	about?: string
+	newsletter?: boolean
+	social?: SocialLink[]
+	copyright?: string
+}
+
+/**
+ * The published header or footer, or a preview key's draft, with the menu
+ * it names already read — live, so a menu edited in the panel shows without a
+ * publish. `menu` is null when none is named or the named one is gone.
+ */
+export type SiteChrome<S> = {
+	revision?: number
+	preview: boolean
+	settings: S
+	menu: StorefrontMenu | null
+}
+export type SiteHeader = SiteChrome<HeaderSettings>
+export type SiteFooter = SiteChrome<FooterSettings>
 
 /** Settings that hold a picture's or a video's address, which may be the engine's own upload. */
 const MEDIA_KEYS = new Set(['image', 'mobile_image', 'poster', 'video_file'])
@@ -161,6 +207,38 @@ export class LayoutService extends BaseService {
 		} catch {
 			return null
 		}
+	}
+
+	/**
+	 * The header the shop set in the theme editor (D131), drawn on every
+	 * page: the published one, or a preview key's draft. Null — the
+	 * storefront's own header — when none is published, the editor is off, the
+	 * engine is older, or anything fails: a header is never worth an error page.
+	 */
+	async getHeader({ preview }: { preview?: string | null } = {}): Promise<SiteHeader | null> {
+		return this.chrome<HeaderSettings>('header', preview)
+	}
+
+	/** The footer the shop set in the theme editor (D131); null for the storefront's own, as getHeader. */
+	async getFooter({ preview }: { preview?: string | null } = {}): Promise<SiteFooter | null> {
+		return this.chrome<FooterSettings>('footer', preview)
+	}
+
+	private async chrome<S extends { menu?: string }>(page: 'header' | 'footer', preview?: string | null): Promise<SiteChrome<S> | null> {
+		let layout: PageLayout | null
+		try {
+			layout = await this.getPageLayout(page, { preview })
+		} catch {
+			return null
+		}
+		const section = layout?.sections.find((s) => s.type === page)
+		if (!layout || !section) return null
+		const settings = { ...section.settings } as S
+		let menu: StorefrontMenu | null = null
+		if (typeof settings.menu === 'string' && settings.menu) {
+			menu = await new MenuService(this._fetch).getMenu(settings.menu).catch(() => null)
+		}
+		return { revision: layout.revision, preview: layout.preview, settings, menu }
 	}
 }
 

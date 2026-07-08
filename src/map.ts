@@ -14,8 +14,10 @@
  *   4. Lists are always arrays. Product cards read `variants[0]` unguarded.
  */
 import type {
+	AddOn,
 	Address,
 	Cart,
+	CartOffer,
 	CartLine,
 	Category,
 	CmsPage,
@@ -29,6 +31,7 @@ import type {
 	SearchDoc,
 	Variant,
 	Vendor,
+	FreeShipping,
 } from './engine'
 import { minorToMajor, toMajor, type Money } from './money'
 import type { CartExtras, StorefrontAddress } from './browser'
@@ -385,7 +388,15 @@ export function toCartLine(l: CartLine, extra: { slug?: string; thumbnail?: stri
 		variantTitle: l.variant_label ?? '',
 		qty: l.quantity,
 		price: toMajor(l.unit_price),
-		mrp: toMajor(l.unit_price),
+		// The variant's compare-at price, where the shop set one above what the
+		// line costs: what the basket's "you save" is measured from.
+		mrp:
+			l.compare_at_price && l.compare_at_price.amount_minor > l.unit_price.amount_minor
+				? toMajor(l.compare_at_price)
+				: toMajor(l.unit_price),
+		/** The add-on this line was bought as (D132), or null on an ordinary line. */
+		addOnId: l.add_on_id ? str(l.add_on_id) : null,
+		addOnFor: l.add_on_for ? str(l.add_on_for) : null,
 		subtotal: toMajor(l.total),
 		total: toMajor(l.total),
 		inStock: l.in_stock,
@@ -656,3 +667,52 @@ export function toUser(c: Customer) {
 }
 
 export const priceOf = (m: Money | undefined) => (m ? toMajor(m) : 0)
+
+/**
+ * An add-on as the buy box draws it (D132): `price` is what ticking it adds,
+ * the offer where there is one, and `regularPrice` the add-on's own, struck
+ * through beside it. Without an offer the two are the same and nothing is
+ * struck.
+ */
+export function toAddOn(a: AddOn) {
+	return {
+		id: str(a.id),
+		productId: str(a.item.product_id),
+		variantId: str(a.variant_id),
+		slug: a.item.slug,
+		title: a.item.title,
+		variantTitle: a.item.variant_label ?? '',
+		thumbnail: mediaUrl(a.item.image_url ?? null),
+		price: toMajor(a.offer_price ?? a.price),
+		regularPrice: toMajor(a.price),
+		hasOffer: !!a.offer_price && a.offer_price.amount_minor < a.price.amount_minor,
+		inStock: a.item.in_stock,
+	}
+}
+
+/** A listed code for one basket, in major units (D132). */
+export function toCartOffer(o: CartOffer, currency: string) {
+	const isPercent = o.kind === 'percentage'
+	return {
+		code: o.code,
+		title: o.title,
+		isPercent,
+		freeShipping: o.kind === 'free_shipping',
+		/** The percentage for a percentage code, the amount for a fixed one. */
+		value: isPercent ? (o.value_bp ?? 0) / 100 : minorToMajor(o.value_minor ?? 0, currency),
+		minAmount: o.min_subtotal_minor ? minorToMajor(o.min_subtotal_minor, currency) : null,
+		applies: o.applies,
+		amount: o.amount ? toMajor(o.amount) : null,
+		remaining: o.remaining ? toMajor(o.remaining) : null,
+		reason: o.reason ?? '',
+	}
+}
+
+export function toFreeShipping(f: FreeShipping) {
+	return {
+		qualifies: f.qualifies,
+		threshold: f.threshold ? toMajor(f.threshold) : null,
+		remaining: f.remaining ? toMajor(f.remaining) : null,
+		subtotal: toMajor(f.subtotal),
+	}
+}

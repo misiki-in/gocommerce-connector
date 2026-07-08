@@ -128,6 +128,54 @@ export type CartLine = {
 	available: number
 	in_stock: boolean
 	price_changed: boolean
+	/** The add-on this line was bought as (D132), and the product it is offered with. */
+	add_on_id?: number
+	add_on_for?: number
+	compare_at_price?: Money
+}
+
+/** A variant offered with a product, optionally at an offer price (D132). */
+export type AddOn = {
+	id: number
+	product_id: number
+	variant_id: number
+	position: number
+	offer_price: Money | null
+	price: Money
+	compare_at_price?: Money
+	item: {
+		product_id: number
+		slug: string
+		title: string
+		variant_label?: string
+		sku: string
+		image_url?: string
+		live: boolean
+		in_stock: boolean
+	}
+}
+
+/** A listed discount code, judged against one basket (D132). */
+export type CartOffer = {
+	code: string
+	title: string
+	kind: 'percentage' | 'fixed' | 'free_shipping' | string
+	value_bp?: number
+	value_minor?: number
+	min_subtotal_minor?: number
+	applies: boolean
+	amount?: Money
+	free_shipping?: boolean
+	remaining?: Money
+	reason?: string
+}
+
+/** How far a basket is from free delivery (D132). */
+export type FreeShipping = {
+	qualifies: boolean
+	threshold?: Money
+	remaining?: Money
+	subtotal: Money
 }
 
 export type Cart = {

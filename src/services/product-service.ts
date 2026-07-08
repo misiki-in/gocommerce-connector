@@ -1,6 +1,6 @@
-import type { Product, ReviewPage } from '../engine'
+import type { AddOn, Product, ReviewPage } from '../engine'
 import { GoCommerceError, NotSupportedError } from '../errors'
-import { toProduct, toRating } from '../map'
+import { toAddOn, toProduct, toRating } from '../map'
 import { currentMe } from '../browser'
 import { CatalogService, PAGE_SIZE, type CatalogQuery } from './catalog'
 
@@ -96,6 +96,38 @@ export class ProductService extends CatalogService {
 		const category = (await this.facts.categories()).find((c) => String(c.id) === String(categoryId))
 		if (!category) return this.list({ page, limit })
 		return this.list({ page, limit, categories: category.slug })
+	}
+
+	/**
+	 * What the shop offers with a product, ticked in its buy box (D132): each
+	 * add-on at the price ticking it adds. Only add-ons that can be bought
+	 * arrive; an engine without the route offers none.
+	 */
+	async listAddOns({ product }: { product: string }) {
+		const p = await this.findProduct(String(product))
+		try {
+			return ((await this.data<AddOn[] | null>('/api/add-ons', { query: { product_id: p.id } })) ?? []).map(toAddOn)
+		} catch (err) {
+			if (err instanceof GoCommerceError && err.status === 404) return []
+			throw err
+		}
+	}
+
+	/**
+	 * "You may also like": the products the shop chose for this one, at their
+	 * own prices (D132). Curated only, and empty when none were chosen: the
+	 * related products already fill in from the category, and the page should
+	 * not draw the same fill twice.
+	 */
+	async listCrossSells({ product, limit }: { product: string; limit?: number }) {
+		const p = await this.findProduct(String(product))
+		try {
+			const rows = (await this.data<Product[] | null>('/api/cross-sells', { query: { product_id: p.id, limit } })) ?? []
+			return rows.map((r) => toProduct(r))
+		} catch (err) {
+			if (err instanceof GoCommerceError && err.status === 404) return []
+			throw err
+		}
 	}
 
 	private async relatedTo(slug: string, limit?: number) {

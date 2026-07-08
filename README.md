@@ -128,6 +128,9 @@ down stays best-effort: the storefront renders from its static record.
 | collections | `/api/collections`, `/api/collections/{slug}` |
 | featured / trending shelves | the collection with slug `featured` / `trending`; newest products when there is none |
 | bag | `/api/carts…`, `/api/carts/{token}/discount` |
+| Complete the set (add-ons) | `/api/add-ons?product_id=` — `productService.listAddOns({ product })`, each at the price ticking it adds (`price`) beside its own (`regularPrice`); `cartService.addAddOn({ addOnId })` after the product is in the bag. The engine keeps the offer price only while the product is in the bag, one for each |
+| You may also like | `/api/cross-sells?product_id=` — `productService.listCrossSells({ product })`, curated only; the bag's `/api/carts/{token}/cross-sells` — `cartService.listCrossSells()`, falling back to the first item's related products |
+| the bag's offers and free delivery | `/api/carts/{token}/offers` — `cartService.getOffers()` and the coupon drawer's `couponService.listCoupons()`: only the codes the shop chose to show; `/api/carts/{token}/free-shipping` — `cartService.getFreeShipping()`, from the store's own rates, null when it cannot say |
 | delivery options | `/api/checkout/rates` |
 | payment methods | `/api/checkout` — cash on delivery, Razorpay, and the first hosted-page gateway (see below) |
 | place order | `POST /api/checkout/{code}` with an `Idempotency-Key` |
@@ -140,6 +143,7 @@ down stays best-effort: the storefront renders from its static record.
 | FAQ | `/x/faq` |
 | composed home page | `/x/layouts/home` (`?preview=` for a draft) — `layoutService.getHomeLayout()`, null when the store has none; carries `themeSettings` and each collection list's `collections` |
 | product and collection templates | `/x/layouts/product`, `/x/layouts/collection` (`?preview=` for a draft) — `layoutService.getProductLayout()` and `getCollectionLayout()`, the sections the shop arranged around the page's core (`main-product`, `main-collection`); null when none is published, and the page draws as before |
+| header and footer | `/x/layouts/header`, `/x/layouts/footer` (`?preview=` for a draft) — `layoutService.getHeader()` and `getFooter()`: the announcement strip and header menu, the footer's columns menu, words, newsletter switch, social links and copyright line, with the named menu read live from `/x/navigation/menus/{handle}`; null when none is published or on any failure, and the storefront keeps its own. The store's `header` and `footer` menus (`menuService.engineMenus()`, the store record's `menu`) are the ones those name |
 | theme settings | `/x/layouts/theme` (`?preview=` for a draft) — `layoutService.getThemeSettings()`, the store's colours, fonts and rounding for every page; null when there are none |
 | menus | `/x/navigation/menus/{header,footer}`, laid over `store.menu`; any menu by handle |
 | product specs table | the product's category attribute answers |
