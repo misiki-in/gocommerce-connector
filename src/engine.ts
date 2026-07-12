@@ -80,6 +80,10 @@ export type Product = {
 	seo_description: string
 	image_url?: string
 	media_count?: number
+	/** The gallery, pictures and videos in order: on the public product only (D134). */
+	media?: VariantImage[]
+	/** The sold count rounded down; absent unless the shop shows counts and it passed the threshold (D134). */
+	sold_at_least?: number
 	options: ProductOption[] | null
 	variants: Variant[] | null
 	collections: { id: number; slug: string; title: string }[] | null
@@ -128,13 +132,13 @@ export type CartLine = {
 	available: number
 	in_stock: boolean
 	price_changed: boolean
-	/** The add-on this line was bought as (D132), and the product it is offered with. */
+	/** The add-on this line was bought as (D133), and the product it is offered with. */
 	add_on_id?: number
 	add_on_for?: number
 	compare_at_price?: Money
 }
 
-/** A variant offered with a product, optionally at an offer price (D132). */
+/** A variant offered with a product, optionally at an offer price (D133). */
 export type AddOn = {
 	id: number
 	product_id: number
@@ -155,7 +159,7 @@ export type AddOn = {
 	}
 }
 
-/** A listed discount code, judged against one basket (D132). */
+/** A listed discount code, judged against one basket (D133). */
 export type CartOffer = {
 	code: string
 	title: string
@@ -170,7 +174,7 @@ export type CartOffer = {
 	reason?: string
 }
 
-/** How far a basket is from free delivery (D132). */
+/** How far a basket is from free delivery (D133). */
 export type FreeShipping = {
 	qualifies: boolean
 	threshold?: Money
@@ -430,3 +434,6 @@ export type Offer = {
 
 /** A menu's name, from `GET /x/navigation/menus`. */
 export type MenuSummary = { handle: string; title: string }
+
+/** GET /api/postcodes/{country}/{code} (D134). */
+export type Postcode = { country: string; postcode: string; city: string; state: string; state_code: string }

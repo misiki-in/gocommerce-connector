@@ -4,7 +4,7 @@ import { CartService } from './cart-service'
 
 /**
  * Discount codes are typed, not browsed, except the ones the shop chose to
- * show (D132): the engine lists a code only when the shop ticked "Show in the
+ * show (D133): the engine lists a code only when the shop ticked "Show in the
  * basket's offers", judged against the stored bag. Every other code stays
  * known only to whoever was given it, and still works through
  * `cartService.applyCoupon`.
