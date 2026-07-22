@@ -292,7 +292,15 @@ export type ShippingRate = { rate_id: number; name: string; price: Money; zone_i
 export type Plugin = { key: string; title: string; settings: Record<string, unknown> }
 
 /** `GET /api/store`: what anyone may read about the shop. */
-export type StoreProfile = { name: string; email: string; phone: string; support_url: string; language: string }
+export type StoreProfile = {
+	name: string
+	email: string
+	phone: string
+	support_url: string
+	language: string
+	/** Where the engine serves this store's pictures resized (D139); absent on an engine before it. */
+	images_path?: string
+}
 
 export type Vendor = {
 	id: number
@@ -420,7 +428,15 @@ export type SearchDoc = {
 	updated_at: number
 }
 
-export type SearchResult = { hits: SearchDoc[] | null; query: string; total: number; limit: number; offset: number }
+export type SearchResult = {
+	hits: SearchDoc[] | null
+	query: string
+	total: number
+	limit: number
+	offset: number
+	/** Meilisearch did not answer: search the product listing instead. */
+	unavailable?: boolean
+}
 
 /** One approved vendor's offer on a variant, from `GET /api/variants/{id}/offers`. Cheapest first. */
 export type Offer = {

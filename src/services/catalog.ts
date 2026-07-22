@@ -111,6 +111,9 @@ const quote = (s: string) => `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"
 /**
  * One shelf of products, from whichever engine route can answer the question.
  *
+ * - Words, with no tag, vendor, type or attribute ticked, on a store with the
+ *   Meilisearch plugin on: its index, which forgives typos, with the facet
+ *   rail the database counts for the same words.
  * - Asked for facets: `GET /api/products?facets=1`, which answers every filter,
  *   the category and the sort on its own (D130).
  * - A category, no reordering: `GET /api/categories/{slug}`, which sells the
@@ -119,6 +122,8 @@ const quote = (s: string) => `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"
  * - Any sort but newest, or a price range: the Meilisearch module, when it is
  *   installed and configured. Without it the shelf comes back in the engine's
  *   order with `sorted: false`, rather than failing or pretending.
+ *
+ * Whenever the index cannot answer (Meilisearch down), the database does.
  */
 /** Engines, by base URL, that answered `facets=1` without facets. */
 const legacyListing = new Set<string>()
@@ -137,10 +142,16 @@ export class CatalogService extends BaseService {
 			values.filter(Boolean).map((v) => `${handle}:${v}`),
 		)
 
-		if (q.facets && !legacyListing.has(this.engineBase())) {
+		// A shopper's words go to the index first: it forgives typos and ranks
+		// by relevance. Not once they have ticked a tag, vendor, type or
+		// attribute, which only the database filters and counts.
+		const refined = attr.length > 0 || !!(q.tags?.length || q.vendors?.length || q.productTypes?.length)
+		const triedIndex = !!search && !refined
+		const counted = q.facets && !legacyListing.has(this.engineBase())
+		const facetListing = async (page: number, limit: number) => {
 			const { currency } = await this.facts.ready()
 			const minor = (n?: number) => (Number.isFinite(n) ? Math.max(0, toMinor(n as number, currency)) : undefined)
-			const env = await this.engine<Product[] | null>('/api/products', {
+			return this.engine<Product[] | null>('/api/products', {
 				query: {
 					q: search,
 					page,
@@ -157,6 +168,19 @@ export class CatalogService extends BaseService {
 					facets: 1,
 				},
 			})
+		}
+		if (triedIndex && (await this.facts.pluginOn('meilisearch'))) {
+			const [found, rail] = await Promise.all([
+				this.fromIndex(q, { page, limit, search, sortKey, wantsRange, hierarchy }),
+				counted ? facetListing(1, 1).catch(() => null) : null,
+			])
+			// The rail is the database's count for the same words: there to narrow
+			// by when they match exactly, empty for a typo only the index forgives.
+			if (found) return rail?.meta?.facets ? { ...found, facets: rail.meta.facets } : found
+		}
+
+		if (counted) {
+			const env = await facetListing(page, limit)
 			if (env.meta?.facets) {
 				return {
 					...toPage(env, (p: Product) => toProduct(p)),
@@ -169,40 +193,9 @@ export class CatalogService extends BaseService {
 			legacyListing.add(this.engineBase())
 		}
 
-		if ((sortKey || wantsRange) && (await this.facts.pluginOn('meilisearch'))) {
-			const filters: string[] = []
-			if (q.category) {
-				const names = (await this.facts.subtree(q.category).catch(() => [] as Category[])).map((c) =>
-					quote(c.full_name),
-				)
-				// A slug the tree does not know sells nothing — say so, don't widen to the shop.
-				if (!names.length) return { ...emptyCatalog(limit), categoryHierarchy: hierarchy, sorted: true }
-				filters.push(`category IN [${names.join(', ')}]`)
-			}
-			if (wantsRange) {
-				const { currency } = await this.facts.ready()
-				if (Number.isFinite(q.priceFrom)) filters.push(`price_minor >= ${toMinor(q.priceFrom as number, currency)}`)
-				if (Number.isFinite(q.priceTo)) filters.push(`price_minor <= ${toMinor(q.priceTo as number, currency)}`)
-			}
-			const res = await this.data<SearchResult>('/x/meilisearch/search', {
-				query: {
-					q: search ?? '',
-					limit,
-					offset: (page - 1) * limit,
-					filter: filters.join(' AND ') || undefined,
-					sort: sortKey,
-				},
-			})
-			const total = res.total ?? 0
-			return {
-				data: (res.hits ?? []).map(fromSearchDoc),
-				count: total,
-				pageSize: limit,
-				noOfPage: Math.max(1, Math.ceil(total / limit)),
-				page,
-				categoryHierarchy: hierarchy,
-				sorted: true,
-			}
+		if (!triedIndex && (sortKey || wantsRange)) {
+			const found = await this.fromIndex(q, { page, limit, search, sortKey, wantsRange, hierarchy })
+			if (found) return found
 		}
 
 		const sorted = !sortKey && !wantsRange
@@ -225,6 +218,55 @@ export class CatalogService extends BaseService {
 			query: { q: search, page, limit, channel: this.creds.channel, attr },
 		})
 		return { ...toPage(env, (p: Product) => toProduct(p)), categoryHierarchy: hierarchy, sorted }
+	}
+
+	/**
+	 * The shelf from the Meilisearch module, or null when the store has it off,
+	 * sells through a channel, finds nothing for the words, or it cannot answer (Meilisearch down: the engine says `unavailable`), so
+	 * the caller asks the database instead of showing the shopper an error.
+	 */
+	protected async fromIndex(
+		q: CatalogQuery,
+		o: { page: number; limit: number; search?: string; sortKey?: string; wantsRange: boolean; hierarchy: CatalogPage['categoryHierarchy'] },
+	): Promise<CatalogPage | null> {
+		// The index knows nothing of channels: a channel's shopper searches the
+		// database, which shows only what the channel sells, at its prices.
+		if (this.creds.channel || !(await this.facts.pluginOn('meilisearch'))) return null
+		const filters: string[] = []
+		if (q.category) {
+			const names = (await this.facts.subtree(q.category).catch(() => [] as Category[])).map((c) => quote(c.full_name))
+			// A slug the tree does not know sells nothing — say so, don't widen to the shop.
+			if (!names.length) return { ...emptyCatalog(o.limit), categoryHierarchy: o.hierarchy, sorted: true }
+			filters.push(`category IN [${names.join(', ')}]`)
+		}
+		if (o.wantsRange) {
+			const { currency } = await this.facts.ready()
+			if (Number.isFinite(q.priceFrom)) filters.push(`price_minor >= ${toMinor(q.priceFrom as number, currency)}`)
+			if (Number.isFinite(q.priceTo)) filters.push(`price_minor <= ${toMinor(q.priceTo as number, currency)}`)
+		}
+		const res = await this.data<SearchResult>('/x/meilisearch/search', {
+			query: {
+				q: o.search ?? '',
+				limit: o.limit,
+				offset: (o.page - 1) * o.limit,
+				filter: filters.join(' AND ') || undefined,
+				sort: o.sortKey,
+			},
+		}).catch(() => null)
+		// No hits for words may be an index still being built for a store that
+		// just switched it on, or a sync that keeps failing: the database's
+		// answer costs one query and is never worse than nothing.
+		if (!res || res.unavailable || (o.search && !res.hits?.length)) return null
+		const total = res.total ?? 0
+		return {
+			data: (res.hits ?? []).map(fromSearchDoc),
+			count: total,
+			pageSize: o.limit,
+			noOfPage: Math.max(1, Math.ceil(total / o.limit)),
+			page: o.page,
+			categoryHierarchy: o.hierarchy,
+			sorted: true,
+		}
 	}
 }
 
