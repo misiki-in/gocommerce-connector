@@ -154,7 +154,7 @@ down stays best-effort: the storefront renders from its static record.
 | newsletter box | `/x/newsletter/subscribe` |
 | contact form, product enquiries | `/x/contact/messages` |
 | search words, type-ahead (plugin on) | `/x/meilisearch/search`, falling back to the engine's own search when it is off or down |
-| store record | the storefront's own config, with the engine's currency, menus and module switches over it |
+| store record | the storefront's own config, with the engine's currency, menus and module switches over it; the store's own logo, dark logo and icon (`logo_url`, `logo_dark_url`, `icon_url` from `/api/store`, D148) replace `logo`, `logoDark` and `favicon` when it has them |
 | resized product pictures | `/images/{store}/cdn-cgi/image/width=…/…` — the store record's `plugins.imageCdn` is turned on with provider `cloudflare` and the engine's `images_path` (from `/api/store`, D139) after `PUBLIC_GOCOMMERCE_API_URL`, so the storefront's srcset asks the engine for each width; an engine without it leaves the static record's setting |
 
 Blogs, banners, reels, chat, warranties, deals and uploads have no engine
