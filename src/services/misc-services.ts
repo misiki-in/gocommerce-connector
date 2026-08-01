@@ -28,12 +28,15 @@ export class ContactService extends BaseService {
 		phone,
 		message,
 		subject,
+		website,
 	}: {
 		name: string
 		email: string
 		phone?: string
 		message: string
 		subject?: string
+		/** The form's hidden honeypot, passed on so the engine drops what a bot filled in. */
+		website?: string
 	}) {
 		return this.data<{ status: string }>('/x/contact/messages', {
 			method: 'POST',
@@ -43,6 +46,7 @@ export class ContactService extends BaseService {
 				...(phone ? { phone: String(phone) } : {}),
 				...(subject ? { subject: String(subject) } : {}),
 				body: String(message ?? ''),
+				...(website ? { website: String(website) } : {}),
 			},
 		})
 	}

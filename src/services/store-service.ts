@@ -126,6 +126,23 @@ export class StoreService extends BaseService {
 			...(profile?.logo_url ? { logo: mediaUrl(profile.logo_url), logoDark: undefined } : {}),
 			...(profile?.logo_dark_url ? { logoDark: mediaUrl(profile.logo_dark_url) } : {}),
 			...(profile?.icon_url ? { favicon: mediaUrl(profile.icon_url) } : {}),
+			// What the contact page shows (D156), only what the store published. The address
+			// in the shape the storefront's contact page and home-page JSON-LD already read. The
+			// country beside it, not over `country`: that is the address form's default country.
+			...(profile?.country ? { businessCountry: profile.country } : {}),
+			...(profile?.address
+				? {
+						address: {
+							street: [profile.address.line1, profile.address.line2].filter(Boolean).join(', '),
+							city: profile.address.city,
+							state: profile.address.state,
+							pincode: profile.address.postal_code,
+							country: profile.address.country,
+						},
+					}
+				: {}),
+			...(profile?.map_location ? { mapLocation: profile.map_location } : {}),
+			...(profile?.opening_hours?.length ? { openingHours: profile.opening_hours } : {}),
 			currencyCode: code,
 			currencySymbol: sameCurrency ? (base.currencySymbol ?? symbolFor(code)) : symbolFor(code),
 			currency: {
@@ -139,6 +156,18 @@ export class StoreService extends BaseService {
 				// Features this connector serves from a module: on exactly when the
 				// module is installed and switched on, whatever the static record says.
 				isWishlist: { ...basePlugins.isWishlist, ...flag(plugins.has('wishlist')) },
+				// The corner button and the contact page's WhatsApp card read the number from
+				// here; the engine's plugin holds it, in international digits.
+				whatsappChatButton: {
+					...basePlugins.whatsappChatButton,
+					...flag(plugins.has('whatsapp-chat')),
+					...(plugins.has('whatsapp-chat')
+						? {
+								phone: String(plugins.get('whatsapp-chat')?.settings?.phone ?? ''),
+								message: String(plugins.get('whatsapp-chat')?.settings?.message ?? ''),
+							}
+						: {}),
+				},
 				isProductReviewsAndRatings: {
 					...basePlugins.isProductReviewsAndRatings,
 					...flag(plugins.has('product-reviews')),
