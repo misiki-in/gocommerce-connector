@@ -277,6 +277,179 @@ test('an order is its own parent, with lines as an array', () => {
 	assert.equal(o.shippingAddress.firstName, 'Ada')
 })
 
+// ---------------------------------------------------------- google reviews
+
+const googlePlace = {
+	rating: 4.6,
+	user_rating_count: 182,
+	google_maps_uri: 'https://maps.google.com/?cid=1',
+	reviews: [
+		{
+			author: {
+				name: 'Asha R',
+				uri: 'https://www.google.com/maps/contrib/1',
+				photo_uri: 'https://lh3.googleusercontent.com/a/1',
+			},
+			rating: 5,
+			text: 'Lovely staff.',
+			language: 'en',
+			relative_time: 'a month ago',
+			publish_time: '2026-09-28T10:00:00Z',
+			visit_date: '2026-09',
+			google_maps_uri: 'https://www.google.com/maps/reviews/1',
+			flag_uri: 'https://www.google.com/local/review/rap/report?postId=1',
+		},
+		{ author: { name: 'Vikram' }, rating: 1 },
+	],
+}
+
+/** An engine with ext/google-reviews: `plugins` is GET /api/plugins, `answers` the module's routes. */
+function googleEngine(plugins, answers, seen) {
+	return async (url) => {
+		const u = new URL(String(url))
+		seen?.push(u.pathname + u.search)
+		if (u.pathname === '/api/plugins') return Response.json({ data: plugins })
+		const answer = answers[u.pathname]
+		if (typeof answer === 'number') return Response.json({ error: { code: 'x', message: 'no' } }, { status: answer })
+		if (answer) return Response.json({ data: answer })
+		return Response.json({ error: { code: 'not_found', message: 'no route' } }, { status: 404 })
+	}
+}
+
+test("Google's rating and reviews are Google's answer, asked for every time, and nothing while off", async () => {
+	m.clearStoreCache()
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: undefined, baseDomain: undefined })
+	const seen = []
+	const on = [{ key: 'google-reviews', title: 'Google reviews', settings: { show_place: true } }]
+	const svc = new m.GoogleReviewService(googleEngine(on, { '/x/google-reviews/place': googlePlace }, seen))
+	const got = await svc.place()
+	assert.equal(got.rating, 4.6)
+	assert.equal(got.count, 182)
+	assert.equal(got.mapsUrl, 'https://maps.google.com/?cid=1')
+	assert.deepEqual(got.reviews[0], {
+		author: 'Asha R',
+		authorUrl: 'https://www.google.com/maps/contrib/1',
+		authorPhoto: 'https://lh3.googleusercontent.com/a/1',
+		rating: 5,
+		text: 'Lovely staff.',
+		language: 'en',
+		when: 'a month ago',
+		visited: '2026-09',
+		url: 'https://www.google.com/maps/reviews/1',
+		reportUrl: 'https://www.google.com/local/review/rap/report?postId=1',
+	})
+	// The one-star review is there too, as Google sent it.
+	assert.equal(got.reviews[1].rating, 1)
+	assert.equal(got.reviews[1].text, '')
+	// Google's terms forbid keeping the answer, so a second read asks again.
+	await svc.place()
+	assert.equal(seen.filter((p) => p === '/x/google-reviews/place').length, 2)
+
+	// The day's lookups spent, or Google refusing: nothing, not an error.
+	for (const status of [429, 502]) {
+		m.clearStoreCache()
+		const quiet = new m.GoogleReviewService(googleEngine(on, { '/x/google-reviews/place': status }))
+		assert.equal(await quiet.place(), null)
+	}
+	// Anything else is still a failure the caller sees.
+	m.clearStoreCache()
+	const broken = new m.GoogleReviewService(googleEngine(on, { '/x/google-reviews/place': 500 }))
+	await assert.rejects(broken.place(), (err) => err instanceof m.GoCommerceError && err.status === 500)
+
+	// A place with no ratings yet shows nothing rather than "0 reviews".
+	m.clearStoreCache()
+	const unrated = new m.GoogleReviewService(
+		googleEngine(on, { '/x/google-reviews/place': { ...googlePlace, rating: 0, user_rating_count: 0, reviews: [] } }),
+	)
+	assert.equal(await unrated.place(), null)
+
+	// The switch off, or the plugin off: Google is not asked at all.
+	for (const plugins of [[{ key: 'google-reviews', title: 'Google reviews', settings: { show_place: false } }], []]) {
+		m.clearStoreCache()
+		const asked = []
+		const off = new m.GoogleReviewService(googleEngine(plugins, { '/x/google-reviews/place': googlePlace }, asked))
+		assert.equal(await off.place(), null)
+		assert.ok(!asked.includes('/x/google-reviews/place'), `asked Google with ${JSON.stringify(plugins)}`)
+	}
+})
+
+test("the survey is asked for with the order's own key, and only for an order placed in this browser", async () => {
+	const kept = { gocommerce_orders: JSON.stringify([{ number: 'GC-000049', token: 'tok_49', cartId: 'c1' }]) }
+	globalThis.window = {
+		location: { origin: 'http://storefront.test', hostname: 'storefront.test' },
+		localStorage: { getItem: (k) => kept[k] ?? null, setItem() {}, removeItem() {} },
+	}
+	globalThis.document = { cookie: '' }
+	const survey = {
+		merchant_id: 1234567,
+		order_id: 'GC-000049',
+		email: 'a@example.com',
+		delivery_country: 'IN',
+		estimated_delivery_date: '2026-11-04',
+		opt_in_style: 'BOTTOM_TRAY',
+	}
+	try {
+		m.clearStoreCache()
+		m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: undefined, baseDomain: undefined })
+		const on = [{ key: 'google-reviews', title: 'Google reviews', settings: { customer_reviews: true } }]
+		const seen = []
+		const svc = new m.GoogleReviewService(googleEngine(on, { '/x/google-reviews/survey/GC-000049': survey }, seen))
+		assert.deepEqual(await svc.survey('GC-000049'), survey)
+		assert.deepEqual(
+			seen.filter((p) => p.startsWith('/x/')),
+			['/x/google-reviews/survey/GC-000049?token=tok_49'],
+		)
+
+		// Another browser's order, or none: there is no key, so nothing is asked.
+		assert.equal(await svc.survey('GC-000050'), null)
+		assert.equal(await svc.survey(''), null)
+		assert.equal(seen.filter((p) => p.startsWith('/x/')).length, 1)
+
+		// The survey switched off: nothing.
+		m.clearStoreCache()
+		const off = new m.GoogleReviewService(
+			googleEngine([{ key: 'google-reviews', title: 'Google reviews', settings: { customer_reviews: false } }], {
+				'/x/google-reviews/survey/GC-000049': survey,
+			}),
+		)
+		assert.equal(await off.survey('GC-000049'), null)
+	} finally {
+		delete globalThis.window
+		delete globalThis.document
+	}
+})
+
+test("the store record turns on Google's survey and store widget from the engine alone", async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test/', proxyPath: undefined, baseDomain: undefined })
+	m.setStaticStore(() => ({ id: 'from_config', name: 'Shop', plugins: { googleReviewsOptIn: { active: true } } }))
+	let settings = { customer_reviews: true, store_widget: 'Bottom left', show_place: true }
+	const svc = new m.StoreService(async (url) => {
+		const path = new URL(String(url)).pathname
+		if (path === '/api/checkout') return Response.json({ data: { currency: 'INR', methods: [] } })
+		if (path === '/api/plugins')
+			return Response.json({ data: settings ? [{ key: 'google-reviews', title: 'Google reviews', settings }] : [] })
+		return Response.json({ data: [] })
+	})
+	m.clearStoreCache()
+	let store = await svc.getStoreByIdOrDomain()
+	assert.equal(store.plugins.googleReviewsOptIn.active, true)
+	assert.deepEqual(store.plugins.googleStoreWidget, { active: true, position: 'LEFT_BOTTOM' })
+
+	// The widget belongs to the survey's programme: without the survey, no widget.
+	m.clearStoreCache()
+	settings = { customer_reviews: false, store_widget: 'Bottom right' }
+	store = await svc.getStoreByIdOrDomain()
+	assert.equal(store.plugins.googleReviewsOptIn.active, false)
+	assert.deepEqual(store.plugins.googleStoreWidget, { active: false })
+
+	// The plugin off: both off, whatever the static record says.
+	m.clearStoreCache()
+	settings = null
+	store = await svc.getStoreByIdOrDomain()
+	assert.equal(store.plugins.googleReviewsOptIn.active, false)
+	assert.equal(store.plugins.googleStoreWidget.active, false)
+})
+
 // ---------------------------------------------------------------- the surface
 
 test('every service the storefront imports by name is exported', () => {
@@ -293,6 +466,8 @@ test('every service the storefront imports by name is exported', () => {
 		'addressService',
 		'wishlistService',
 		'reviewService',
+		'googleReviewService',
+		'GoogleReviewService',
 		'storeService',
 		'menuService',
 		'pageService',

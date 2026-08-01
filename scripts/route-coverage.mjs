@@ -6,8 +6,8 @@
  * Reads the engine's route registrations straight from its Go source — core
  * and every ext/ module — so a route added to the engine fails this check
  * until the connector reaches it. Admin routes are the operator's, not a
- * storefront's; feeds, sitemaps, IndexNow and gateway webhooks are read by
- * machines, not shoppers.
+ * storefront's; feeds (Google's product ratings feed among them), sitemaps,
+ * IndexNow and gateway webhooks are read by machines, not shoppers.
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
@@ -24,7 +24,7 @@ const files = (dir, ext) =>
 		return statSync(p).isDirectory() ? files(p, ext) : p.endsWith(ext) ? [p] : []
 	})
 
-const MACHINE = ['/webhook', '/x/feeds/', '/x/sitemaps/', '/x/indexnow/']
+const MACHINE = ['/webhook', '/x/feeds/', '/x/sitemaps/', '/x/indexnow/', '/x/google-reviews/product-reviews.xml']
 const routes = new Set()
 for (const f of [...files(join(engine, 'core'), '.go'), ...files(join(engine, 'ext'), '.go')]) {
 	if (f.endsWith('_test.go')) continue
