@@ -155,6 +155,27 @@ export function currentMe(): Partial<Me> | null {
 	}
 }
 
+/**
+ * The browser Meta's pixel ran in, which the engine's Conversions API module
+ * reads off the order as `metadata.meta_capi` (D160): Meta's own first-party
+ * cookies, the user agent and the page. Only where the pixel is running on this
+ * page and its `_fbp` cookie is there: the storefront starts the pixel only
+ * where the shopper allows ad cookies, and the cookie outlives a choice taken
+ * back, so the server sends a purchase exactly when the browser was allowed
+ * to. The page goes without its query, which can carry anything.
+ */
+export function metaBrowser(): Record<string, string> | undefined {
+	const fbp = readCookie('_fbp')
+	if (!fbp || typeof (window as { fbq?: unknown }).fbq !== 'function') return undefined
+	const fbc = readCookie('_fbc')
+	return {
+		fbp,
+		...(fbc ? { fbc } : {}),
+		client_user_agent: window.navigator.userAgent,
+		event_source_url: window.location.origin + window.location.pathname,
+	}
+}
+
 // ---------------------------------------------------------------- cart
 
 /** `localStorage.cart_id`, the storefront's own key, with its stale spellings refused. */
@@ -191,8 +212,11 @@ export type CartExtras = {
 	shippingRateId?: string | null
 	shippingRate?: { id: string; name: string; minor: number; currency: string } | null
 	discount?: AppliedDiscount | null
-	/** The Idempotency-Key of the last checkout attempt, and the body it was sent with. */
-	attempt?: { key: string; body: string } | null
+	/**
+	 * The Idempotency-Key of the last checkout attempt, the body it was sent with, and where
+	 * Meta's pixel ran then, which a retry sends again unchanged.
+	 */
+	attempt?: { key: string; body: string; meta?: Record<string, string> } | null
 }
 
 const extrasKey = (cartId: string) => `gocommerce_cart_${cartId}`
