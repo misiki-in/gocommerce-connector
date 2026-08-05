@@ -2242,3 +2242,67 @@ test('a retry after a failed checkout keeps its key and body, though the pixel s
 		m.BaseService.setCredentials({ apiUrl: undefined })
 	}
 })
+
+test('a checkout carries where the shopper came from, as the storefront recorded it, and nothing stale', async () => {
+	const now = Date.now()
+	const ago = (days) => new Date(now - days * 86400000).toISOString()
+	const local = {
+		cart_id: 'cart_3',
+		gocommerce_cart_cart_3: JSON.stringify({ shippingAddress: { firstName: 'Asha', email: 'a@example.com', address_1: '1 MG Road', city: 'Pune', zip: '411001', countryCode: 'IN' } }),
+		gc_attribution: JSON.stringify({
+			first: { utm_source: 'facebook', utm_medium: 'paid', utm_campaign: 'Launch', fbclid: 'IwAR1', at: ago(12) },
+			last: { utm_source: 'google', utm_medium: 'cpc', utm_campaign: 'Diwali', gclid: 'Cj0', referrer: 'www.google.com', at: ago(1), email: 'x@y.z' },
+		}),
+	}
+	globalThis.window = {
+		location: { origin: 'https://shop.test', pathname: '/checkout/payment', hostname: 'shop.test' },
+		navigator: { userAgent: 'UA' },
+		localStorage: {
+			getItem: (k) => local[k] ?? null,
+			setItem: (k, v) => {
+				local[k] = v
+			},
+			removeItem: (k) => {
+				delete local[k]
+			},
+		},
+	}
+	globalThis.document = { cookie: '' }
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: undefined, baseDomain: undefined })
+	const bodies = []
+	const order = { id: 3, number: 'GC-3', status: 'confirmed', payment_status: 'pending', payment_provider: 'cod', currency: 'INR',
+		total: { amount_minor: 1000, currency: 'INR' }, lines: [], address: {}, created_at: '', updated_at: '' }
+	const svc = new m.CheckoutService(async (url, init) => {
+		const path = new URL(String(url)).pathname
+		if (path === '/api/carts/cart_3') return Response.json({ data: { id: 'cart_3', email: 'a@example.com', lines: [], currency: 'INR' } })
+		if (path === '/api/checkout/cod') {
+			bodies.push(JSON.parse(init.body))
+			return Response.json({ data: { order, payment: { kind: 'none', provider: 'cod' } } })
+		}
+		return Response.json({ data: [] })
+	})
+	try {
+		await svc.checkoutCOD({ cartId: 'cart_3' })
+		assert.deepEqual(bodies[0].metadata, {
+			attribution: {
+				first: { utm_source: 'facebook', utm_medium: 'paid', utm_campaign: 'Launch', fbclid: 'IwAR1', at: ago(12) },
+				// Only the names the engine reads travel; anything else in storage stays there.
+				last: { utm_source: 'google', utm_medium: 'cpc', utm_campaign: 'Diwali', gclid: 'Cj0', referrer: 'www.google.com', at: ago(1) },
+			},
+		})
+
+		// A first visit older than 30 days is forgotten; the last one still counts.
+		local.gc_attribution = JSON.stringify({ first: { utm_source: 'old', at: ago(31) }, last: { utm_source: 'google', at: ago(2) } })
+		await svc.checkoutCOD({ cartId: 'cart_3' })
+		assert.deepEqual(bodies[1].metadata, { attribution: { last: { utm_source: 'google', at: ago(2) } } })
+
+		// Nothing recorded, or nothing readable: no attribution at all.
+		local.gc_attribution = '{not json'
+		await svc.checkoutCOD({ cartId: 'cart_3' })
+		assert.equal(bodies[2].metadata, undefined)
+	} finally {
+		delete globalThis.window
+		delete globalThis.document
+		m.BaseService.setCredentials({ apiUrl: undefined })
+	}
+})
