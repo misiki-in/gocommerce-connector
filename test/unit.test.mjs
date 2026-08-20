@@ -2291,15 +2291,20 @@ test('a checkout carries where the shopper came from, as the storefront recorded
 			},
 		})
 
-		// A first visit older than 30 days is forgotten; the last one still counts.
+		// A first visit older than 30 days is forgotten, and the last one, still fresh, is the first
+		// visit in the window too. A visit naming no source, or dated in the future, is none.
 		local.gc_attribution = JSON.stringify({ first: { utm_source: 'old', at: ago(31) }, last: { utm_source: 'google', at: ago(2) } })
 		await svc.checkoutCOD({ cartId: 'cart_3' })
-		assert.deepEqual(bodies[1].metadata, { attribution: { last: { utm_source: 'google', at: ago(2) } } })
+		const google = { utm_source: 'google', at: ago(2) }
+		assert.deepEqual(bodies[1].metadata, { attribution: { first: google, last: google } })
+		local.gc_attribution = JSON.stringify({ first: { at: ago(1) }, last: { utm_source: 'x', at: ago(-5) } })
+		await svc.checkoutCOD({ cartId: 'cart_3' })
+		assert.equal(bodies[2].metadata, undefined)
 
 		// Nothing recorded, or nothing readable: no attribution at all.
 		local.gc_attribution = '{not json'
 		await svc.checkoutCOD({ cartId: 'cart_3' })
-		assert.equal(bodies[2].metadata, undefined)
+		assert.equal(bodies[3].metadata, undefined)
 	} finally {
 		delete globalThis.window
 		delete globalThis.document
