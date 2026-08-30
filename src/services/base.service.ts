@@ -120,7 +120,9 @@ export class BaseService {
 		const lang = (req.method ?? 'GET') === 'GET' ? this.creds.language : undefined
 		const url = this.engineURL(path, lang ? { lang, ...req.query } : req.query)
 		const headers: Record<string, string> = { Accept: 'application/json', ...req.headers }
-		if (req.body !== undefined) headers['Content-Type'] = 'application/json'
+		// A form goes as it is: fetch writes its multipart Content-Type, boundary included.
+		const form = req.body instanceof FormData ? req.body : undefined
+		if (req.body !== undefined && !form) headers['Content-Type'] = 'application/json'
 		const store = this.store
 		if (store) headers['X-Store'] = store
 		if (req.auth) {
@@ -132,7 +134,7 @@ export class BaseService {
 		const init: RequestInit = {
 			method: req.method ?? 'GET',
 			headers,
-			body: req.body === undefined ? undefined : JSON.stringify(req.body),
+			body: form ?? (req.body === undefined ? undefined : JSON.stringify(req.body)),
 		}
 		let res: Response
 		try {

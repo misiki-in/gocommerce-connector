@@ -432,6 +432,9 @@ export function toCartLine(l: CartLine, extra: { slug?: string; thumbnail?: stri
 		/** The add-on this line was bought as (D133), or null on an ordinary line. */
 		addOnId: l.add_on_id ? str(l.add_on_id) : null,
 		addOnFor: l.add_on_for ? str(l.add_on_for) : null,
+		/** The shopper's own design this line is made to (D162) and its picture, or null on a line sold as it is. */
+		designId: l.design_id ?? null,
+		designPreview: mediaUrl(l.design_preview_url),
 		subtotal: toMajor(l.total),
 		total: toMajor(l.total),
 		inStock: l.in_stock,
@@ -573,6 +576,8 @@ function toOrderLine(l: OrderLine, currency: string) {
 		total: toMajor(l.total),
 		currencyCode: currency,
 		status: l.shipped_quantity >= l.quantity ? 'Shipped' : 'Pending',
+		designId: l.metadata?.design?.id ?? null,
+		designPreview: mediaUrl(l.metadata?.design?.preview_url),
 		files: [],
 		usedOptions: [],
 	}
