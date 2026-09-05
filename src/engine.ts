@@ -84,6 +84,8 @@ export type Product = {
 	media?: VariantImage[]
 	/** The sold count rounded down; absent unless the shop shows counts and it passed the threshold (D134). */
 	sold_at_least?: number
+	/** Sold only made to a shopper's design (D174); absent from an engine that predates the flag. */
+	designable?: boolean
 	options: ProductOption[] | null
 	variants: Variant[] | null
 	collections: { id: number; slug: string; title: string }[] | null
@@ -261,6 +263,8 @@ export type Order = {
 	shipping: Money
 	shipping_method?: string
 	discount: Money
+	/** What the payment method added (D165): cash on delivery's extra charge. Absent on an engine before it. */
+	payment_fee?: Money
 	tax: Money
 	tax_inclusive: boolean
 	total: Money
@@ -288,7 +292,8 @@ export type CheckoutResult = { order: Order; payment: PaymentIntent }
 
 export type CheckoutOptions = {
 	payment_methods: string[]
-	methods: { code: string; name: string }[]
+	/** `fee` is what choosing the method adds to the order (D165); absent, it adds nothing. */
+	methods: { code: string; name: string; fee?: Money }[]
 	currency: string
 }
 
@@ -379,6 +384,8 @@ export type StoreProfile = {
 	phone: string
 	support_url: string
 	language: string
+	/** Whether the store's prices include tax (D177); absent on an engine before it. */
+	prices_include_tax?: boolean
 	/** Where the engine serves this store's pictures resized (D139); absent on an engine before it. */
 	images_path?: string
 	/** The store's logo, logo for dark backgrounds and square icon (D148); empty or absent when it has none. */
@@ -523,6 +530,8 @@ export type SearchDoc = {
 	price_max_minor: number
 	in_stock: boolean
 	skus: string[] | null
+	/** As on the product (D174), as of its last change or reindex; absent from an index built before the flag. */
+	designable?: boolean
 	updated_at: number
 }
 

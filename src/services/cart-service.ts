@@ -102,7 +102,7 @@ export class CartService extends BaseService {
 			// The remembered cart was checked out in another tab, or expired, so a
 			// new one is started rather than refusing the shopper's click. A missing
 			// variant or design is a 404 too, and must not leave the bag behind.
-			if (err instanceof GoCommerceError && /cart not found|checked out/.test(err.message)) {
+			if (cartGone(err)) {
 				const fresh = await this.open()
 				return this.present(
 					await this.data<Cart>(`/api/carts/${encodeURIComponent(fresh)}/line-items`, { method: 'POST', body }),
@@ -377,5 +377,13 @@ export class CartService extends BaseService {
 }
 
 const clean = (id?: string | null): string | null => (id && id !== 'undefined' && id !== 'null' ? id : null)
+
+const cartGone = (err: unknown): boolean =>
+	err instanceof GoCommerceError &&
+	(err.code === 'cart_not_found' || err.code === 'cart_checked_out' || cartGoneOnOlderEngine(err))
+
+const cartGoneOnOlderEngine = (err: GoCommerceError): boolean =>
+	(err.code === 'not_found' && err.message === 'cart not found') ||
+	(err.code === 'conflict' && err.message === 'this cart has already been checked out')
 
 export const cartService = new CartService()

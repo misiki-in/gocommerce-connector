@@ -1,4 +1,4 @@
-import type { ProductFacets } from '../engine'
+import type { Category, ProductFacets } from '../engine'
 import { toMajor } from '../money'
 import { CatalogService } from './catalog'
 
@@ -42,13 +42,35 @@ function attributesFrom(p: URLSearchParams): Record<string, string[]> | undefine
 const counts = (values: { value: string; count: number }[] | null | undefined) =>
 	Object.fromEntries((values ?? []).map((v) => [v.value, v.count]))
 
+type RailCategory = { name: string; slug: string; count: number; depth: number }
+
+function categoryFacets(counted: NonNullable<ProductFacets['categories']>, tree: Category[]): RailCategory[] {
+	const byId = new Map(tree.map((c) => [c.id, c]))
+	const totals = new Map<number, number>()
+	for (const { id, count } of counted) {
+		for (let c = byId.get(id); c; c = c.parent_id === null ? undefined : byId.get(c.parent_id)) {
+			totals.set(c.id, (totals.get(c.id) ?? 0) + count)
+		}
+	}
+	const kept = tree.filter((c) => totals.has(c.id)).sort((a, b) => a.position - b.position || a.id - b.id)
+	const parentOf = (c: Category) => (c.parent_id !== null && byId.has(c.parent_id) ? c.parent_id : null)
+	const under = (parent: number | null): RailCategory[] =>
+		kept
+			.filter((c) => parentOf(c) === parent)
+			.flatMap((c) => [{ name: c.title, slug: c.slug, count: totals.get(c.id)!, depth: c.depth }, ...under(c.id)])
+	return [
+		...under(null),
+		...counted.filter((c) => !byId.has(c.id)).map((c) => ({ name: c.title, slug: c.slug, count: c.count, depth: 0 })),
+	]
+}
+
 /**
  * The engine's counts in the shape the storefront's filter rail reads. Each
  * `allFilters` key is also the URL parameter the rail writes when a value is
  * ticked, and `searchWithUrl` reads it back: `vendor`, `product_type` and
  * `attributes.<handle>`. Tags go to the rail's own tag group, written as `tags`.
  */
-export function toStorefrontFacets(f?: ProductFacets | null) {
+export function toStorefrontFacets(f?: ProductFacets | null, tree: Category[] = []) {
 	if (!f) return { priceStat: {}, categories: [], tags: [], allFilters: {} }
 	const allFilters: Record<string, Record<string, number>> = {}
 	const group = (key: string, values: { value: string; count: number }[] | null | undefined) => {
@@ -59,7 +81,7 @@ export function toStorefrontFacets(f?: ProductFacets | null) {
 	for (const [handle, values] of Object.entries(f.attributes ?? {})) group(`attributes.${handle}`, values)
 	return {
 		priceStat: f.price ? { min: toMajor(f.price.min), max: toMajor(f.price.max) } : {},
-		categories: (f.categories ?? []).map((c) => ({ name: c.title, slug: c.slug, count: c.count })),
+		categories: categoryFacets(f.categories ?? [], tree),
 		tags: (f.tags ?? []).map((t) => ({ name: t.value, count: t.count })),
 		allFilters,
 	}
@@ -104,13 +126,14 @@ export class SearchService extends CatalogService {
 				productTypes: listParam(p, 'product_type'),
 				facets: true,
 			})
+			const tree = res.facets?.categories?.length ? await this.facts.categories().catch(() => [] as Category[]) : []
 			return {
 				data: res.data,
 				count: res.count,
 				totalPages: res.noOfPage,
 				page: res.page,
 				categoryHierarchy: res.categoryHierarchy,
-				facets: toStorefrontFacets(res.facets),
+				facets: toStorefrontFacets(res.facets, tree),
 			}
 		} catch (err) {
 			// A missing category is an empty result — the route turns that into

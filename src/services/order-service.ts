@@ -72,6 +72,7 @@ export class OrderService extends BaseService {
 			img: string | null
 			price: number
 			qty: number
+			designId: string | null
 		}[] = []
 		for (const o of orders) {
 			for (const l of o.line_items ?? []) {
@@ -84,6 +85,7 @@ export class OrderService extends BaseService {
 					img: mediaUrl(l.image_url),
 					price: toMajor(l.unit_price),
 					qty: l.quantity,
+					designId: l.metadata?.design?.id ?? null,
 				})
 			}
 		}
@@ -94,7 +96,8 @@ export class OrderService extends BaseService {
 		return lines.flatMap((l, i) => {
 			const p = live[i]
 			if (!p) return []
-			return [{ ...l, productId: String(l.productId), variantId: String(l.variantId), slug: p.slug }]
+			const designable = typeof p.designable === 'boolean' ? p.designable : undefined
+			return [{ ...l, productId: String(l.productId), variantId: String(l.variantId), slug: p.slug, designable }]
 		})
 	}
 

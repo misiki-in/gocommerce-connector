@@ -275,6 +275,57 @@ test('an order is its own parent, with lines as an array', () => {
 	assert.equal(o.total, 500)
 	assert.deepEqual(o.lineItems, [])
 	assert.equal(o.shippingAddress.firstName, 'Ada')
+	assert.equal(o.codCharges, 0, 'an engine before D165 sends no payment fee')
+})
+
+test("cash on delivery's extra charge is on its method before the choice and on the order after", async () => {
+	m.clearStoreCache()
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const svc = new m.PaymentMethodService(async () =>
+		Response.json({
+			data: {
+				payment_methods: ['cod', 'razorpay'],
+				methods: [
+					{ code: 'cod', name: 'Cash on delivery', fee: money(6000, 'INR') },
+					{ code: 'razorpay', name: 'Razorpay' },
+				],
+				currency: 'INR',
+			},
+		}),
+	)
+	const { data } = await svc.list({})
+	assert.deepEqual(
+		data.map((x) => [x.code, x.fee]),
+		[
+			['COD', 60],
+			['RAZORPAY', 0],
+		],
+	)
+
+	const o = m.toOrder({
+		id: 124,
+		number: 'GC-000124',
+		status: 'confirmed',
+		payment_status: 'pending',
+		payment_provider: 'cod',
+		currency: 'INR',
+		subtotal: money(1400, 'INR'),
+		shipping: money(4900, 'INR'),
+		discount: money(0, 'INR'),
+		payment_fee: money(6000, 'INR'),
+		tax: money(0, 'INR'),
+		tax_inclusive: true,
+		total: money(12300, 'INR'),
+		refunded: money(0, 'INR'),
+		email: 'a@example.com',
+		address: { name: 'Ada Lovelace', line1: '1 Way', city: 'Pune', postal_code: '411001', country: 'IN' },
+		line_items: null,
+		fulfillments: null,
+		created_at: '2026-10-31T00:00:00Z',
+		updated_at: '2026-10-31T00:00:00Z',
+	})
+	assert.equal(o.codCharges, 60)
+	assert.equal(o.total, 123)
 })
 
 // ---------------------------------------------------------- google reviews
@@ -1491,7 +1542,7 @@ function listingEngine(base, facets) {
 		const u = new URL(url)
 		if (u.pathname === '/api/checkout') return Response.json({ data: { currency: 'INR' } })
 		if (u.pathname === '/api/store') return Response.json({ data: { language: 'en' } })
-		if (u.pathname === '/api/categories') return Response.json({ data: [{ id: 1, slug: 'rings', title: 'Rings', parent_id: null }] })
+		if (u.pathname === '/api/categories') return Response.json({ data: [{ id: 1, slug: 'rings', title: 'Rings', parent_id: null, depth: 0 }] })
 		asked.push(u)
 		const meta = { total: 1, limit: 24, offset: 0, page: 1, total_pages: 1, ...(facets && u.searchParams.get('facets') ? { facets } : {}) }
 		if (u.pathname === '/api/categories/rings') return Response.json({ data: { products: [product()] }, meta })
@@ -1549,7 +1600,7 @@ test('every filter the storefront writes reaches the engine, and its counts come
 	)
 	assert.deepEqual(res.facets, {
 		priceStat: { min: 1500, max: 12999.5 },
-		categories: [{ name: 'Rings', slug: 'rings', count: 4 }],
+		categories: [{ name: 'Rings', slug: 'rings', count: 4, depth: 0 }],
 		tags: [{ name: 'bridal', count: 4 }],
 		allFilters: { vendor: { Acme: 3 }, 'attributes.metal': { Gold: 2, 'Silver, sterling': 1 } },
 	})
@@ -1572,6 +1623,96 @@ test('an engine that does not count facets is asked the old way, once, and the r
 		['/api/categories/rings'],
 		'remembered: no second wasted request',
 	)
+})
+
+const cat = (id, slug, title, parent_id = null, depth = 0, position = 0) => ({ id, slug, title, parent_id, depth, position })
+
+async function railCategories(base, tree, counted) {
+	const fetch = async (url) => {
+		const u = new URL(url)
+		if (u.pathname === '/api/checkout') return Response.json({ data: { currency: 'INR' } })
+		if (u.pathname === '/api/categories') return tree ? Response.json({ data: tree }) : new Response('', { status: 500 })
+		const facets = { categories: counted.map(([id, slug, title, count]) => ({ id, slug, title, count })) }
+		return Response.json({ data: [product()], meta: { total: 1, limit: 24, offset: 0, page: 1, total_pages: 1, facets } })
+	}
+	m.BaseService.setCredentials({ apiUrl: base, channel: undefined })
+	return (await new m.SearchService(fetch).searchWithUrl(new URL('http://storefront.test/products'))).facets.categories
+}
+
+const keychains = cat(1, 'keychains', 'Keychains')
+const naruto = cat(2, 'naruto-keychains', 'Naruto keychains', 1, 1)
+const anime = cat(3, 'anime-keychains', 'Anime keychains', 1, 1, 1)
+const mugs = cat(4, 'mugs', 'Mugs', null, 0, 1)
+const village = cat(5, 'village-emblems', 'Village emblems', 2, 2)
+
+test('a counted category comes under its parent, which counts it too', async () => {
+	assert.deepEqual(await railCategories('http://tree-child.test', [keychains, naruto, mugs], [[2, 'naruto-keychains', 'Naruto keychains', 2]]), [
+		{ name: 'Keychains', slug: 'keychains', count: 2, depth: 0 },
+		{ name: 'Naruto keychains', slug: 'naruto-keychains', count: 2, depth: 1 },
+	])
+})
+
+test('a parent counts every child under it, and the rail keeps the tree’s order rather than the counts’', async () => {
+	const counted = [
+		[3, 'anime-keychains', 'Anime keychains', 3],
+		[2, 'naruto-keychains', 'Naruto keychains', 1],
+	]
+	assert.deepEqual(await railCategories('http://tree-siblings.test', [keychains, naruto, anime], counted), [
+		{ name: 'Keychains', slug: 'keychains', count: 4, depth: 0 },
+		{ name: 'Naruto keychains', slug: 'naruto-keychains', count: 1, depth: 1 },
+		{ name: 'Anime keychains', slug: 'anime-keychains', count: 3, depth: 1 },
+	])
+})
+
+test('a tree the engine sends level by level and by name, as it does past 500 categories, still lists each child under its parent, in the store’s order', async () => {
+	const counted = [
+		[5, 'village-emblems', 'Village emblems', 2],
+		[3, 'anime-keychains', 'Anime keychains', 1],
+		[4, 'mugs', 'Mugs', 1],
+	]
+	assert.deepEqual(await railCategories('http://tree-levels.test', [keychains, mugs, anime, naruto, village], counted), [
+		{ name: 'Keychains', slug: 'keychains', count: 3, depth: 0 },
+		{ name: 'Naruto keychains', slug: 'naruto-keychains', count: 2, depth: 1 },
+		{ name: 'Village emblems', slug: 'village-emblems', count: 2, depth: 2 },
+		{ name: 'Anime keychains', slug: 'anime-keychains', count: 1, depth: 1 },
+		{ name: 'Mugs', slug: 'mugs', count: 1, depth: 0 },
+	])
+})
+
+test('a root with products of its own adds them to its children’s, and an unrelated root stands alone', async () => {
+	const counted = [
+		[2, 'naruto-keychains', 'Naruto keychains', 2],
+		[1, 'keychains', 'Keychains', 1],
+		[4, 'mugs', 'Mugs', 1],
+	]
+	assert.deepEqual(await railCategories('http://tree-root.test', [keychains, naruto, mugs], counted), [
+		{ name: 'Keychains', slug: 'keychains', count: 3, depth: 0 },
+		{ name: 'Naruto keychains', slug: 'naruto-keychains', count: 2, depth: 1 },
+		{ name: 'Mugs', slug: 'mugs', count: 1, depth: 0 },
+	])
+})
+
+test('a counted category the tree does not hold is kept, at the top level', async () => {
+	const counted = [
+		[9, 'posters', 'Posters', 5],
+		[2, 'naruto-keychains', 'Naruto keychains', 2],
+	]
+	assert.deepEqual(await railCategories('http://tree-missing.test', [keychains, naruto], counted), [
+		{ name: 'Keychains', slug: 'keychains', count: 2, depth: 0 },
+		{ name: 'Naruto keychains', slug: 'naruto-keychains', count: 2, depth: 1 },
+		{ name: 'Posters', slug: 'posters', count: 5, depth: 0 },
+	])
+})
+
+test('without the tree the rail lists what the engine counted, as it did before', async () => {
+	const counted = [
+		[2, 'naruto-keychains', 'Naruto keychains', 2],
+		[4, 'mugs', 'Mugs', 1],
+	]
+	assert.deepEqual(await railCategories('http://tree-down.test', null, counted), [
+		{ name: 'Naruto keychains', slug: 'naruto-keychains', count: 2, depth: 0 },
+		{ name: 'Mugs', slug: 'mugs', count: 1, depth: 0 },
+	])
 })
 
 // ---------------------------------------------------------------- Meilisearch, and the database behind it
@@ -2057,6 +2198,26 @@ test("the store's own logo and icon win over the storefront's, and an absent one
 	assert.equal(plain.logoDark, '/static-dark.png')
 })
 
+test("whether prices include tax is the store's own answer, and unknown on an engine that does not say", async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test/', proxyPath: undefined, baseDomain: undefined })
+	m.setStaticStore(() => ({ id: 'from_config', name: 'Shop', currency: { code: 'INR', symbol: '₹', includesTax: false } }))
+	let profile
+	const svc = new m.StoreService(async (url) => {
+		const path = new URL(String(url)).pathname
+		if (path === '/api/checkout') return Response.json({ data: { currency: 'INR', methods: [] } })
+		if (path === '/api/store') return Response.json({ data: profile })
+		return Response.json({ data: [] })
+	})
+	const includesTax = async (answer) => {
+		m.clearStoreCache()
+		profile = { name: '', email: '', phone: '', ...answer }
+		return (await svc.getStoreByIdOrDomain()).currency.includesTax
+	}
+	assert.equal(await includesTax({ prices_include_tax: true }), true)
+	assert.equal(await includesTax({ prices_include_tax: false }), false)
+	assert.equal(await includesTax({}), undefined, 'not the static record’s false: that would be every store’s')
+})
+
 test('a contact page gets the address, map, hours and WhatsApp number the store published, and nothing it did not', async () => {
 	m.clearStoreCache()
 	m.BaseService.setCredentials({ apiUrl: 'http://engine.test/', proxyPath: undefined, baseDomain: undefined })
@@ -2100,6 +2261,27 @@ test('a contact page gets the address, map, hours and WhatsApp number the store 
 	assert.equal(quiet.businessCountry, undefined)
 	assert.equal(quiet.plugins.whatsappChatButton.active, false)
 	assert.equal(quiet.plugins.whatsappChatButton.phone, undefined)
+})
+
+test("Criteo loads with the store's own account, and only when the store switched it on", async () => {
+	m.clearStoreCache()
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test/', proxyPath: undefined, baseDomain: undefined })
+	// A shared deployment's static record is every store's: it must not switch Criteo on.
+	m.setStaticStore(() => ({ id: 'from_config', name: 'Shop', plugins: { criteo: { active: true, accountId: '111' } } }))
+	let plugins = [{ key: 'criteo', title: 'Criteo', settings: { account_id: '67357' } }]
+	const svc = new m.StoreService(async (url) => {
+		const path = new URL(String(url)).pathname
+		if (path === '/api/checkout') return Response.json({ data: { currency: 'INR', methods: [] } })
+		if (path === '/api/plugins') return Response.json({ data: plugins })
+		return Response.json({ data: [] })
+	})
+	const store = await svc.getStoreByIdOrDomain()
+	assert.deepEqual(store.plugins.criteo, { active: true, accountId: '67357' })
+
+	m.clearStoreCache()
+	plugins = []
+	const off = await svc.getStoreByIdOrDomain()
+	assert.equal(off.plugins.criteo.active, false)
 })
 
 test('the contact form sends the honeypot, so the engine is the one that drops a bot', async () => {
@@ -2545,6 +2727,225 @@ test('only a missing cart starts a new one; a missing design is refused and the 
 		assert.equal(cart.id, 'cart2')
 		assert.deepEqual(posts, ['/api/carts/cart1/line-items', '/api/carts', '/api/carts/cart2/line-items'])
 	})
+})
+
+const freshBrowser = () => {
+	const local = {}
+	const jar = new Map()
+	globalThis.window = {
+		location: { origin: 'http://storefront.test', hostname: 'storefront.test' },
+		localStorage: {
+			getItem: (k) => local[k] ?? null,
+			setItem: (k, v) => {
+				local[k] = String(v)
+			},
+			removeItem: (k) => {
+				delete local[k]
+			},
+		},
+	}
+	globalThis.document = {
+		get cookie() {
+			return [...jar].map(([k, v]) => `${k}=${v}`).join('; ')
+		},
+		set cookie(line) {
+			const [pair] = line.split(';')
+			const at = pair.indexOf('=')
+			jar.set(pair.slice(0, at).trim(), pair.slice(at + 1).trim())
+		},
+	}
+}
+
+const accountEngine = ({ confirmed = false, putFails = false } = {}) => {
+	const carts = {}
+	const puts = []
+	const fetch = async (url, init = {}) => {
+		const path = new URL(String(url)).pathname
+		const body = init.body ? JSON.parse(init.body) : {}
+		const id = path.split('/')[3]
+		if (init.method === 'POST' && path === '/api/carts') {
+			carts.cart2 = { id: 'cart2', status: 'open', currency: 'INR', line_items: [] }
+			return Response.json({ data: carts.cart2 }, { status: 201 })
+		}
+		if (path === '/x/identity/login') {
+			const record = { id: 9, email: 'ada@example.com', name: 'Ada' }
+			return Response.json({ data: { token: 'sess_1', expires_at: '2099-01-01T00:00:00Z', record } })
+		}
+		if (path === '/x/identity/me/carts') {
+			if (!confirmed)
+				return Response.json({ error: { code: 'forbidden', message: 'confirm your email first' } }, { status: 403 })
+			carts[body.cart_id].email = 'ada@example.com'
+			return Response.json({ data: carts[body.cart_id] })
+		}
+		if (path.endsWith('/email')) {
+			puts.push(id)
+			if (putFails) return Response.json({ error: { code: 'internal', message: 'try again' } }, { status: 500 })
+			carts[id].email = body.email
+			return Response.json({ data: carts[id] })
+		}
+		if (path.endsWith('/line-items')) {
+			carts[id].line_items = [cartLine({ variant_id: 97 })]
+			return Response.json({ data: carts[id] })
+		}
+		return Response.json({ error: { code: 'not_found', message: 'no' } }, { status: 404 })
+	}
+	return { carts, puts, fetch }
+}
+
+test('a signed-in shopper’s bag carries their email, confirmed or not, and a failed write never fails the bag', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: undefined, baseDomain: undefined })
+	const signIn = (engine) => new m.UserService(engine.fetch).login({ email: 'ada@example.com', password: 'pw' })
+	const addToBag = (engine) => new m.CartService(engine.fetch).addToCart({ variantId: '97' })
+	try {
+		freshBrowser()
+		let engine = accountEngine()
+		assert.equal((await addToBag(engine)).email, null, 'a guest')
+		await signIn(engine)
+		assert.equal(engine.carts.cart2.email, 'ada@example.com', 'a guest’s bag, then signing in')
+
+		freshBrowser()
+		engine = accountEngine()
+		await signIn(engine)
+		assert.equal((await addToBag(engine)).email, 'ada@example.com', 'signed in, then a bag')
+
+		freshBrowser()
+		engine = accountEngine({ confirmed: true })
+		await signIn(engine)
+		assert.equal((await addToBag(engine)).email, 'ada@example.com', 'a confirmed account')
+		assert.deepEqual(engine.puts, [], 'the claim set it')
+
+		freshBrowser()
+		engine = accountEngine({ putFails: true })
+		await signIn(engine)
+		const bag = await addToBag(engine)
+		assert.equal(bag.lineItems.length, 1, 'the line goes in')
+		assert.deepEqual(engine.puts, ['cart2'])
+	} finally {
+		delete globalThis.window
+		delete globalThis.document
+		m.BaseService.setCredentials({ apiUrl: undefined })
+	}
+})
+
+function refusingCart(status, code, message) {
+	const posts = []
+	const svc = new m.CartService(async (url, init) => {
+		const path = new URL(String(url)).pathname
+		if (init?.method === 'POST') posts.push(path)
+		if (path === '/api/carts') return Response.json({ data: { id: 'cart2', status: 'open', currency: 'INR', line_items: [] } })
+		if (path === '/api/carts/cart1/line-items') return Response.json({ error: { code, message } }, { status })
+		if (path === '/api/carts/cart2/line-items')
+			return Response.json({ data: { id: 'cart2', status: 'open', currency: 'INR', line_items: [cartLine({ variant_id: 97 })] } })
+		return Response.json({ error: { code: 'not_found', message: 'no' } }, { status: 404 })
+	})
+	return { svc, posts }
+}
+
+test('a gone or checked-out cart is replaced, told by its code, or by its words from an older engine', async () => {
+	await withCart(async () => {
+		m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: undefined, baseDomain: undefined })
+		for (const [status, code, message] of [
+			[404, 'cart_not_found', 'this bag has expired'],
+			[409, 'cart_checked_out', 'this bag is an order now'],
+			[404, 'not_found', 'cart not found'],
+			[409, 'conflict', 'this cart has already been checked out'],
+		]) {
+			const { svc, posts } = refusingCart(status, code, message)
+			const cart = await svc.addToCart({ variantId: '97' })
+			assert.equal(cart.id, 'cart2', code)
+			assert.deepEqual(posts, ['/api/carts/cart1/line-items', '/api/carts', '/api/carts/cart2/line-items'], code)
+		}
+	})
+})
+
+test('design_required, or any refusal not about the cart itself, reaches the storefront with its code, and the bag stays', async () => {
+	await withCart(async () => {
+		m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: undefined, baseDomain: undefined })
+		for (const [code, message] of [
+			['design_required', 'this product is made to your design; design it before adding it to the bag'],
+			['design_required', 'design this case before it is checked out'],
+			['conflict', 'part of this basket is already being checked out; wait for it to finish'],
+		]) {
+			const { svc, posts } = refusingCart(409, code, message)
+			const err = await svc.addToCart({ variantId: '97' }).catch((e) => e)
+			assert.deepEqual([err instanceof m.GoCommerceError, err.status, err.code, err.message], [true, 409, code, message])
+			assert.deepEqual(posts, ['/api/carts/cart1/line-items'], message)
+		}
+	})
+})
+
+test('a product says whether it is made to a design, and one from an engine that does not say is unknown', () => {
+	assert.deepEqual(
+		[
+			m.toProduct(product({ designable: true })).designable,
+			m.toProduct(product({ designable: false })).designable,
+			m.toProduct(product()).designable,
+			m.toProduct(product({ designable: null })).designable,
+		],
+		[true, false, undefined, undefined],
+	)
+})
+
+test('a search hit says whether its product is made to a design, and a hit from an index that does not say is unknown', () => {
+	const hit = (over = {}) => ({ id: 7, slug: 'cotton-tee', title: 'Cotton tee', description: '', tags: null, currency: 'USD',
+		price_minor: 2500, price_max_minor: 2500, in_stock: true, skus: null, updated_at: 1790000000, ...over })
+	assert.deepEqual(
+		[
+			m.fromSearchDoc(hit({ designable: true })).designable,
+			m.fromSearchDoc(hit({ designable: false })).designable,
+			m.fromSearchDoc(hit()).designable,
+			m.fromSearchDoc(hit({ designable: null })).designable,
+		],
+		[true, false, undefined, undefined],
+	)
+})
+
+test('buy again says which past lines were designed and which products are made to a design', async () => {
+	const store = { gocommerce_token: 'sess_1' }
+	globalThis.window = {
+		location: { origin: 'http://storefront.test', hostname: 'storefront.test' },
+		localStorage: {
+			getItem: (k) => store[k] ?? null,
+			setItem: (k, v) => {
+				store[k] = v
+			},
+			removeItem: (k) => {
+				delete store[k]
+			},
+		},
+	}
+	globalThis.document = { cookie: '' }
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const line = (id, product_id, over = {}) => ({ id, product_id, variant_id: 90 + id, sku: `S${id}`, title: `Line ${id}`, quantity: 1,
+		shipped_quantity: 1, unit_price: money(49900, 'INR'), total: money(49900, 'INR'), ...over })
+	const lines = [
+		line(1, 41, { metadata: { design: { id: 'des_1', preview_url: '/media/stores/s1/prev.png' } } }),
+		line(2, 42),
+		line(3, 43),
+		line(4, 44),
+	]
+	const flags = { 41: { designable: true }, 42: { designable: true }, 43: { designable: false }, 44: {} }
+	try {
+		const svc = new m.OrderService(async (url) => {
+			const path = new URL(String(url)).pathname
+			if (path === '/x/identity/me/orders') return Response.json({ data: [{ id: 9, number: 'GC-000009', currency: 'INR', line_items: lines }] })
+			const id = Number(path.split('/').pop())
+			return Response.json({ data: product({ id, slug: `case-${id}`, ...flags[id] }) })
+		})
+		assert.deepEqual(
+			(await svc.buyAgain()).map((l) => [l.slug, l.designId, l.designable]),
+			[
+				['case-41', 'des_1', true],
+				['case-42', null, true],
+				['case-43', null, false],
+				['case-44', null, undefined],
+			],
+		)
+	} finally {
+		delete globalThis.window
+		delete globalThis.document
+		m.BaseService.setCredentials({ apiUrl: undefined })
+	}
 })
 
 test('a designed line, in the bag and on the order, carries its design and its picture through the proxy', async () => {
