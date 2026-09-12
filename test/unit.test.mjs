@@ -1390,7 +1390,7 @@ test('a layout carries its theme settings, its nested uploads and its collection
 				sections: [
 					{ id: 's', type: 'slideshow', settings: { slides: [{ image: '/media/s1.jpg', mobile_image: '/media/s1m.jpg', heading: '/media/words' }, { image: 'https://cdn.example/s2.jpg' }] } },
 					{ id: 'v', type: 'video', settings: { video_file: '/media/v.mp4', poster: '/media/v.jpg' } },
-					{ id: 'c', type: 'collection-list', settings: { collections: [2, 1] }, collections: [{ id: 2, slug: 'rings', title: 'Rings', image: '/media/r.jpg' }, { id: 1, slug: 'chains', title: 'Chains' }] },
+					{ id: 'c', type: 'collection-list', settings: { collections: [2, 1] }, collections: [{ id: 2, slug: 'rings', title: 'Rings', image: '/media/r.jpg', description: 'Bands in gold and silver' }, { id: 1, slug: 'chains', title: 'Chains' }] },
 					{ id: 'e', type: 'collection-list', settings: {} },
 				],
 			},
@@ -1406,8 +1406,8 @@ test('a layout carries its theme settings, its nested uploads and its collection
 	assert.equal(layout.sections[1].settings.video_file, 'http://engine.test/media/v.mp4')
 	assert.equal(layout.sections[1].settings.poster, 'http://engine.test/media/v.jpg')
 	assert.deepEqual(layout.sections[2].collections, [
-		{ id: '2', title: 'Rings', slug: 'rings', link: '/collections/rings', image: 'http://engine.test/media/r.jpg' },
-		{ id: '1', title: 'Chains', slug: 'chains', link: '/collections/chains', image: null },
+		{ id: '2', title: 'Rings', slug: 'rings', link: '/collections/rings', image: 'http://engine.test/media/r.jpg', description: 'Bands in gold and silver' },
+		{ id: '1', title: 'Chains', slug: 'chains', link: '/collections/chains', image: null, description: null },
 	])
 	assert.deepEqual(layout.sections[3].collections, [])
 })
