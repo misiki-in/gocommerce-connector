@@ -3043,3 +3043,502 @@ test('a checkout carries where the shopper came from, as the storefront recorded
 		m.BaseService.setCredentials({ apiUrl: undefined })
 	}
 })
+
+const quoteBrowser = (extras) => {
+	const local = { cart_id: 'cart_q', gocommerce_cart_cart_q: JSON.stringify(extras) }
+	globalThis.window = {
+		location: { origin: 'https://shop.test', pathname: '/checkout/payment', hostname: 'shop.test', href: 'https://shop.test/checkout/payment' },
+		navigator: { userAgent: 'test' },
+		localStorage: {
+			getItem: (k) => local[k] ?? null,
+			setItem: (k, v) => {
+				local[k] = v
+			},
+			removeItem: (k) => {
+				delete local[k]
+			},
+		},
+	}
+	globalThis.document = { cookie: '' }
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: undefined, baseDomain: undefined })
+}
+
+const leaveBrowser = () => {
+	delete globalThis.window
+	delete globalThis.document
+	m.BaseService.setCredentials({ apiUrl: undefined })
+}
+
+const shopper = {
+	shippingAddress: { firstName: 'Asha', email: 'asha@example.com', address_1: '1 Test Road', city: 'Pune', state: 'Maharashtra', zip: '411001', countryCode: 'IN' },
+	shippingRateId: '7',
+}
+
+const inr = (n) => money(n, 'INR')
+
+const quoteCart = (email) => Response.json({ data: { id: 'cart_q', email, line_items: [], currency: 'INR' } })
+
+test('a quote asks the engine with what checkout sends, and its figures arrive in rupees under the order’s names', async () => {
+	quoteBrowser(shopper)
+	const asked = []
+	let placed
+	const svc = new m.CheckoutService(async (url, init) => {
+		const u = new URL(String(url))
+		if (u.pathname === '/api/carts/cart_q') return quoteCart('')
+		if (u.pathname === '/api/checkout/quote') {
+			asked.push(Object.fromEntries(u.searchParams))
+			return Response.json({
+				data: {
+					subtotal: inr(100000),
+					shipping: inr(4900),
+					shipping_method: 'Standard',
+					discount: { code: 'AUTO10', title: 'Ten percent', auto_applied: true, amount: inr(10000) },
+					tax: inr(16219),
+					tax_inclusive: false,
+					payment_fee: inr(4000),
+					total: inr(115119),
+				},
+			})
+		}
+		if (u.pathname === '/api/checkout/cod') {
+			placed = JSON.parse(init.body)
+			const order = { id: 1, number: 'GC-1', status: 'confirmed', payment_status: 'pending', payment_provider: 'cod', currency: 'INR', total: inr(115119), address: {}, created_at: '', updated_at: '' }
+			return Response.json({ data: { order, payment: { kind: 'none', provider: 'cod' } } })
+		}
+		return Response.json({ data: [] })
+	})
+	try {
+		const quote = await svc.getQuote({ method: 'COD' })
+		assert.deepEqual(quote, {
+			subtotal: 1000,
+			shippingCharges: 49,
+			shippingMethod: 'Standard',
+			discount: 100,
+			coupon: { code: 'AUTO10', title: 'Ten percent', autoApplied: true, freeShipping: false },
+			tax: 162.19,
+			taxIncluded: false,
+			codCharges: 40,
+			total: 1151.19,
+		})
+		assert.deepEqual(asked[0], { cart: 'cart_q', country: 'IN', state: 'Maharashtra', shipping_rate_id: '7', method: 'cod', email: 'asha@example.com' })
+
+		await svc.checkoutCOD({ cartId: 'cart_q' })
+		assert.deepEqual(
+			{ cart: placed.cart_id, country: placed.address.country, state: placed.address.state, shipping_rate_id: String(placed.shipping_rate_id), method: 'cod', email: placed.email },
+			asked[0],
+			'the order is placed with exactly what was quoted',
+		)
+	} finally {
+		leaveBrowser()
+	}
+})
+
+test('a quote with no method chosen is a preview, and PAYPAL is quoted as the store’s hosted-page gateway', async () => {
+	quoteBrowser({ shippingAddress: shopper.shippingAddress })
+	const asked = []
+	const svc = new m.CheckoutService(async (url) => {
+		const u = new URL(String(url))
+		if (u.pathname === '/api/carts/cart_q') return quoteCart('cart@example.com')
+		if (u.pathname === '/api/checkout') {
+			return Response.json({ data: { payment_methods: ['cod', 'paddle'], methods: [{ code: 'cod', name: 'Cash on delivery' }, { code: 'paddle', name: 'Card' }], currency: 'INR' } })
+		}
+		if (u.pathname === '/api/checkout/quote') {
+			asked.push(Object.fromEntries(u.searchParams))
+			return Response.json({ data: { subtotal: inr(25000), shipping: inr(0), discount: null, tax: inr(0), tax_inclusive: true, payment_fee: inr(0), total: inr(25000) } })
+		}
+		return Response.json({ data: [] })
+	})
+	try {
+		const preview = await svc.getQuote()
+		assert.deepEqual(asked[0], { cart: 'cart_q', country: 'IN', state: 'Maharashtra', email: 'cart@example.com' }, 'no method and no delivery choice yet: neither is sent')
+		assert.deepEqual([preview.coupon, preview.discount, preview.taxIncluded, preview.total], [null, 0, true, 250])
+
+		await svc.getQuote({ method: 'PAYPAL' })
+		assert.equal(asked[1].method, 'paddle')
+	} finally {
+		leaveBrowser()
+	}
+})
+
+test('a free-delivery code is named on the quote, with nothing off the lines and nothing charged for delivery', async () => {
+	quoteBrowser(shopper)
+	const svc = new m.CheckoutService(async (url) => {
+		const u = new URL(String(url))
+		if (u.pathname === '/api/carts/cart_q') return quoteCart('asha@example.com')
+		return Response.json({
+			data: {
+				subtotal: inr(100000),
+				shipping: inr(0),
+				shipping_method: 'Express',
+				discount: { code: 'FREESHIP', title: 'Free delivery', auto_applied: true, amount: inr(0), free_shipping: true },
+				tax: inr(18000),
+				tax_inclusive: false,
+				payment_fee: inr(0),
+				total: inr(118000),
+			},
+		})
+	})
+	try {
+		const quote = await svc.getQuote({ method: 'RAZORPAY' })
+		assert.deepEqual(
+			[quote.coupon, quote.discount, quote.shippingCharges, quote.total],
+			[{ code: 'FREESHIP', title: 'Free delivery', autoApplied: true, freeShipping: true }, 0, 0, 1180],
+		)
+	} finally {
+		leaveBrowser()
+	}
+})
+
+test('there is nothing to quote before the address step, and the engine is not asked', async () => {
+	quoteBrowser({})
+	let calls = 0
+	const svc = new m.CheckoutService(async () => {
+		calls++
+		return Response.json({ data: {} })
+	})
+	try {
+		assert.equal(await svc.getQuote({ method: 'COD' }), null)
+		assert.equal(calls, 0)
+	} finally {
+		leaveBrowser()
+	}
+})
+
+test('a quote the engine refuses fails with the words and status placing the order would get', async () => {
+	quoteBrowser(shopper)
+	const svc = new m.CheckoutService(async (url) => {
+		const u = new URL(String(url))
+		if (u.pathname === '/api/carts/cart_q') return quoteCart('asha@example.com')
+		return Response.json({ error: { code: 'validation', message: 'this store does not deliver to IN' } }, { status: 422 })
+	})
+	try {
+		const quoted = await svc.getQuote({ method: 'COD' }).catch((e) => e)
+		const placed = await svc.checkoutCOD({ cartId: 'cart_q' }).catch((e) => e)
+		assert.deepEqual([quoted.name, quoted.status, quoted.message], ['GoCommerceError', 422, 'this store does not deliver to IN'])
+		assert.deepEqual([placed.status, placed.message], [quoted.status, quoted.message])
+	} finally {
+		leaveBrowser()
+	}
+})
+
+test('an automatic code is marked on the basket’s offers and in the coupon drawer, and an older engine marks none', async () => {
+	await withCart(async () => {
+		m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: undefined, baseDomain: undefined })
+		const rows = [
+			{ code: 'AUTO10', title: 'Ten percent', kind: 'percentage', value_bp: 1000, applies: true, amount: inr(10000), auto_apply: true },
+			{ code: 'TYPED15', title: 'Fifteen percent', kind: 'percentage', value_bp: 1500, applies: true, amount: inr(15000) },
+		]
+		const fetcher = async () => Response.json({ data: rows })
+		const offers = await new m.CartService(fetcher).getOffers()
+		assert.deepEqual(
+			offers.map((o) => [o.code, o.autoApply]),
+			[
+				['AUTO10', true],
+				['TYPED15', false],
+			],
+		)
+		const drawer = await new m.CouponService(fetcher).listCoupons()
+		assert.deepEqual(
+			drawer.data.map((c) => [c.code, c.autoApply]),
+			[
+				['AUTO10', true],
+				['TYPED15', false],
+			],
+		)
+	})
+})
+
+test('an engine before the quote has nothing to quote, while an unknown cart on a newer one is a refusal', async () => {
+	quoteBrowser(shopper)
+	let answer
+	const svc = new m.CheckoutService(async (url) => {
+		const u = new URL(String(url))
+		if (u.pathname === '/api/carts/cart_q') return quoteCart('asha@example.com')
+		return answer()
+	})
+	try {
+		answer = () =>
+			Response.json({ error: { code: 'not_found', message: 'no route for GET /api/checkout/quote — see /docs for what this store serves' } }, { status: 404 })
+		assert.equal(await svc.getQuote({ method: 'COD' }), null)
+
+		answer = () => Response.json({ error: { code: 'cart_not_found', message: 'cart not found' } }, { status: 404 })
+		const refused = await svc.getQuote({ method: 'COD' }).catch((e) => e)
+		assert.deepEqual([refused.status, refused.message], [404, 'cart not found'])
+	} finally {
+		leaveBrowser()
+	}
+})
+
+test('an API-only engine before the quote refuses the method, and quotes nothing too', async () => {
+	quoteBrowser(shopper)
+	const svc = new m.CheckoutService(async (url) => {
+		const u = new URL(String(url))
+		if (u.pathname === '/api/carts/cart_q') return quoteCart('asha@example.com')
+		return Response.json({ error: { code: 'method_not_allowed', message: 'GET is not allowed on /api/checkout/quote (try POST)' } }, { status: 405 })
+	})
+	try {
+		assert.equal(await svc.getQuote({ method: 'COD' }), null)
+	} finally {
+		leaveBrowser()
+	}
+})
+
+test('an order carries the total the shopper confirmed, in paise, and none when nothing was quoted', async () => {
+	quoteBrowser(shopper)
+	const placed = []
+	const svc = new m.CheckoutService(async (url, init) => {
+		const u = new URL(String(url))
+		if (u.pathname === '/api/carts/cart_q') return quoteCart('asha@example.com')
+		placed.push(JSON.parse(init.body))
+		const order = { id: 1, number: 'GC-1', status: 'confirmed', payment_status: 'pending', payment_provider: 'cod', currency: 'INR', total: inr(115009), address: {}, created_at: '', updated_at: '' }
+		return Response.json({ data: { order, payment: { kind: 'none', provider: 'cod' } } })
+	})
+	try {
+		await svc.checkoutCOD({ cartId: 'cart_q' })
+		svc.expectTotal({ cartId: 'cart_q', total: 1150.09 })
+		await svc.checkoutCOD({ cartId: 'cart_q' })
+		svc.expectTotal({ cartId: 'cart_q', total: null })
+		await svc.checkoutCOD({ cartId: 'cart_q' })
+		assert.deepEqual(
+			placed.map((body) => body.quoted_total_minor),
+			[undefined, 115009, undefined],
+		)
+	} finally {
+		leaveBrowser()
+	}
+})
+
+test('only a total_changed refusal reads as a moved total, and a key already used reads as the other tab', async () => {
+	quoteBrowser(shopper)
+	const figures = { subtotal: inr(100000), shipping: inr(15000), discount: null, tax: inr(5100), tax_inclusive: false, payment_fee: inr(0), total: inr(120100) }
+	let answer
+	const svc = new m.CheckoutService(async (url) => {
+		if (new URL(String(url)).pathname === '/api/carts/cart_q') return quoteCart('asha@example.com')
+		return answer()
+	})
+	try {
+		const changes = []
+		svc.expectTotal({ cartId: 'cart_q', total: 1151, onChange: (...args) => changes.push(args) })
+		answer = () => Response.json({ error: { code: 'conflict', message: 'a line in this basket changed', details: figures } }, { status: 409 })
+		const line = await svc.checkoutCOD({ cartId: 'cart_q' }).catch((e) => e)
+		assert.deepEqual([line.status, line.code, line.message, changes.length], [409, 'conflict', 'a line in this basket changed', 0])
+
+		answer = () =>
+			Response.json({ error: { code: 'validation_failed', message: 'this Idempotency-Key was already used for a different request' } }, { status: 400 })
+		const tab = await svc.checkoutCOD({ cartId: 'cart_q' }).catch((e) => e)
+		assert.deepEqual([tab.status, tab.message], [400, 'This order was already placed in another tab. Check that tab for its confirmation.'])
+	} finally {
+		leaveBrowser()
+	}
+})
+
+test('a total that moved since the quote is refused with the new figures, and confirming the new one places one order under the same key', async () => {
+	quoteBrowser(shopper)
+	const now = {
+		subtotal: inr(100000),
+		shipping: inr(15000),
+		shipping_method: 'Express',
+		discount: null,
+		tax: inr(5100),
+		tax_inclusive: false,
+		payment_fee: inr(0),
+		total: inr(120100),
+	}
+	const order = { id: 9, number: 'GC-9', status: 'confirmed', payment_status: 'pending', payment_provider: 'cod', currency: 'INR', total: now.total, address: {}, created_at: '', updated_at: '' }
+	const placedBy = new Map()
+	const sent = []
+	let loseAnswer = false
+	const svc = new m.CheckoutService(async (url, init) => {
+		const u = new URL(String(url))
+		if (u.pathname === '/api/carts/cart_q') return quoteCart('asha@example.com')
+		const key = init.headers['Idempotency-Key']
+		const quoted = JSON.parse(init.body).quoted_total_minor
+		sent.push([key, quoted])
+		const placed = Response.json({ data: { order, payment: { kind: 'none', provider: 'cod' } } })
+		if (placedBy.has(key)) {
+			if (placedBy.get(key) === init.body) return placed
+			return Response.json({ error: { code: 'validation_failed', message: 'this Idempotency-Key was already used for a different request' } }, { status: 400 })
+		}
+		if (quoted !== now.total.amount_minor) {
+			return Response.json(
+				{ error: { code: 'total_changed', message: `the total is now 120100, not the ${quoted} quoted; show the shopper the new figures`, details: now } },
+				{ status: 409 },
+			)
+		}
+		placedBy.set(key, init.body)
+		if (loseAnswer) {
+			loseAnswer = false
+			return Response.json({ error: { code: 'internal_error', message: 'internal error' } }, { status: 502 })
+		}
+		return placed
+	})
+	try {
+		const changes = []
+		svc.expectTotal({ cartId: 'cart_q', total: 1151, onChange: (...args) => changes.push(args) })
+		const refused = await svc.checkoutCOD({ cartId: 'cart_q' }).catch((e) => e)
+		const figures = { subtotal: 1000, shippingCharges: 150, shippingMethod: 'Express', discount: 0, coupon: null, tax: 51, taxIncluded: false, codCharges: 0, total: 1201 }
+		const sentence = 'Your total changed to ₹1,201. Check the new total and confirm again.'
+		assert.deepEqual([refused.status, refused.message, refused.details], [409, sentence, figures])
+		assert.deepEqual(changes, [[figures, sentence]])
+		assert.equal(placedBy.size, 0)
+
+		loseAnswer = true
+		svc.expectTotal({ cartId: 'cart_q', total: 1201 })
+		await assert.rejects(svc.checkoutCOD({ cartId: 'cart_q' }), { status: 502 })
+		svc.expectTotal({ cartId: 'cart_q', total: 1201 })
+		assert.equal((await svc.checkoutCOD({ cartId: 'cart_q' })).order_no, 'GC-9')
+
+		const key = sent[0][0]
+		assert.deepEqual(sent, [
+			[key, 115100],
+			[key, 120100],
+			[key, 120100],
+		])
+		assert.equal(placedBy.size, 1)
+	} finally {
+		leaveBrowser()
+	}
+})
+
+test("a closed store's message, and whether it takes a password, come from the engine alone", async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test/', proxyPath: undefined, baseDomain: undefined })
+	m.setStaticStore(() => ({ id: 'from_config', name: 'Shop', closed: { message: 'x', password: true } }))
+	let plugins = [
+		{ key: 'store-close', title: 'Store closed', settings: { message: 'Launching soon\nBack in May', password: true } },
+	]
+	const svc = new m.StoreService(async (url) => {
+		const path = new URL(String(url)).pathname
+		if (path === '/api/plugins')
+			return plugins ? Response.json({ data: plugins }) : Response.json({ error: { code: 'internal', message: 'boom' } }, { status: 500 })
+		if (path === '/api/checkout')
+			return Response.json({ error: { code: 'internal', message: 'boom' } }, { status: 500 })
+		return Response.json({ data: [] })
+	})
+	m.clearStoreCache()
+	assert.deepEqual(
+		(await svc.getStoreByIdOrDomain()).closed,
+		{ message: 'Launching soon\nBack in May', password: true },
+		'the rest of the record failing does not open the store',
+	)
+
+	m.clearStoreCache()
+	plugins = [{ key: 'store-close', title: 'Store closed', settings: { message: 'Closed for Diwali', password: false } }]
+	assert.deepEqual((await svc.getStoreByIdOrDomain()).closed, { message: 'Closed for Diwali', password: false })
+
+	m.clearStoreCache()
+	plugins = []
+	assert.equal((await svc.getStoreByIdOrDomain()).closed, undefined)
+
+})
+
+test('a closed store stays closed when the engine cannot list its plugins for a while', async (t) => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test/', proxyPath: undefined, baseDomain: undefined })
+	let plugins = [{ key: 'store-close', title: 'Store closed', settings: { message: 'Launching soon', password: true } }]
+	const svc = new m.StoreService(async (url) => {
+		const path = new URL(String(url)).pathname
+		if (path === '/api/plugins')
+			return plugins ? Response.json({ data: plugins }) : Response.json({ error: { code: 'internal', message: 'boom' } }, { status: 500 })
+		return Response.json({ data: [] })
+	})
+	m.clearStoreCache()
+	t.mock.timers.enable({ apis: ['Date'], now: 1_800_000_000_000 })
+	assert.deepEqual((await svc.getStoreByIdOrDomain()).closed, { message: 'Launching soon', password: true })
+
+	plugins = null
+	t.mock.timers.tick(61_000)
+	assert.deepEqual((await svc.getStoreByIdOrDomain()).closed, { message: 'Launching soon', password: true }, 'a failed read keeps the last answer')
+
+	m.clearStoreCache()
+	assert.equal((await svc.getStoreByIdOrDomain()).closed, undefined, 'with nothing read yet, an unreadable list reads as open')
+})
+
+test("a typed password is trimmed and traded for a pass, carrying the shopper's address for the throttle", async () => {
+	m.clearStoreCache()
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: undefined, baseDomain: 'shopnx.in' })
+	m.setRequestHost(() => 'acme.shopnx.in')
+	const sent = []
+	const svc = new m.StoreService(async (url, init) => {
+		const { pathname } = new URL(String(url))
+		sent.push([pathname, init.method, init.body, init.headers['X-Forwarded-For'], init.headers['X-Store']])
+		return Response.json({ data: { token: '1793000000.c2ln', expires_at: '2026-11-30T00:00:00Z' } })
+	})
+	try {
+		assert.deepEqual(await svc.unlockStore('  launch-day ', { clientAddress: '203.0.113.9' }), {
+			outcome: 'unlocked',
+			pass: { token: '1793000000.c2ln', expiresAt: new Date('2026-11-30T00:00:00Z') },
+		})
+		await svc.unlockStore('launch-day')
+		await svc.unlockStore('launch-day', { clientAddress: '203.0.113.9, 198.51.100.7' })
+		assert.deepEqual(sent, [
+			['/api/store/password', 'POST', '{"password":"launch-day"}', '203.0.113.9', 'acme'],
+			['/api/store/password', 'POST', '{"password":"launch-day"}', undefined, 'acme'],
+			['/api/store/password', 'POST', '{"password":"launch-day"}', undefined, 'acme'],
+		])
+	} finally {
+		m.setRequestHost(() => undefined)
+		m.BaseService.setCredentials({ baseDomain: undefined })
+	}
+})
+
+test('a password the engine refuses is wrong, throttled, open or unavailable, never a throw', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: undefined, baseDomain: undefined })
+	let answer
+	let requests = 0
+	const svc = new m.StoreService(async () => {
+		requests++
+		return answer()
+	})
+	const refused = (status, code) => () => Response.json({ error: { code, message: 'No.' } }, { status })
+	const unlock = (reply, typed = 'launch-day') => {
+		answer = reply
+		return svc.unlockStore(typed)
+	}
+	assert.deepEqual(await unlock(refused(422, 'invalid_password')), { outcome: 'wrong' })
+	assert.deepEqual(await unlock(refused(429, 'too_many_requests')), { outcome: 'throttled' })
+	assert.deepEqual(await unlock(refused(404, 'not_found')), { outcome: 'open' })
+	assert.deepEqual(await unlock(refused(400, 'validation_failed')), { outcome: 'unavailable' })
+	assert.deepEqual(await unlock(refused(500, 'internal')), { outcome: 'unavailable' })
+	assert.deepEqual(
+		await unlock(() => {
+			throw new TypeError('fetch failed')
+		}),
+		{ outcome: 'unavailable' },
+	)
+	assert.deepEqual(
+		await unlock(() => Response.json({ data: { token: '', expires_at: 'soon' } })),
+		{ outcome: 'unavailable' },
+		'a pass the engine did not fill in',
+	)
+	requests = 0
+	assert.deepEqual(await unlock(refused(422, 'invalid_password'), '   '), { outcome: 'wrong' })
+	assert.equal(requests, 0, "nothing typed spends none of the hour's tries")
+})
+
+test('a pass is checked without spending a try: the pass, null when refused, a throw when the engine cannot say', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: undefined, baseDomain: undefined })
+	let answer
+	const bodies = []
+	const svc = new m.StoreService(async (url, init) => {
+		bodies.push(init.body)
+		return answer()
+	})
+	const refused = (status, code) => () => Response.json({ error: { code, message: 'No.' } }, { status })
+	answer = () => Response.json({ data: { token: 't', expires_at: '2026-11-30T00:00:00Z' } })
+	assert.deepEqual(await svc.checkStorePass('t'), { token: 't', expiresAt: new Date('2026-11-30T00:00:00Z') })
+	assert.deepEqual(bodies, ['{"token":"t"}'])
+	answer = refused(422, 'invalid_password')
+	assert.equal(await svc.checkStorePass('t'), null, 'wrong, expired, or from before the password changed')
+	answer = refused(404, 'not_found')
+	assert.equal(await svc.checkStorePass('t'), null, 'the store is open, or closed without a password')
+	answer = refused(500, 'internal')
+	await assert.rejects(svc.checkStorePass('t'), (err) => err instanceof m.GoCommerceError && err.status === 500)
+	bodies.length = 0
+	assert.equal(await svc.checkStorePass(''), null)
+	assert.deepEqual(bodies, [], 'no token, no request')
+})
+
+test('a listed product carries its hover picture second, so a card can swap to it', () => {
+	const p = m.toProduct(product({ image_url: 'https://cdn.example/lead.jpg', hover_image_url: 'https://cdn.example/back.jpg', variants: [variant({ images: [], image: undefined })] }))
+	assert.deepEqual(p.imageList, ['https://cdn.example/lead.jpg', 'https://cdn.example/back.jpg'])
+	assert.equal(p.thumbnail, 'https://cdn.example/lead.jpg')
+})

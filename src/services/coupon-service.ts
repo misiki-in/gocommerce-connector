@@ -10,8 +10,9 @@ import { CartService } from './cart-service'
  * `cartService.applyCoupon`.
  *
  * The drawer's shape: `amount` is the percentage or the amount,
- * `minAmount` the bag it needs, and `description` says what is
- * still missing.
+ * `minAmount` the bag it needs, `description` says what is
+ * still missing, and `autoApply` marks a code checkout applies by
+ * itself (D179).
  */
 export class CouponService extends BaseService {
 	async listCoupons(_args: Record<string, unknown> = {}) {
@@ -31,6 +32,7 @@ export class CouponService extends BaseService {
 					: o.reason || o.title,
 			applies: o.applies,
 			remaining: o.remaining,
+			autoApply: o.autoApply,
 		}))
 		return { data, count: data.length, pageSize: data.length, noOfPage: 1, page: 1 }
 	}

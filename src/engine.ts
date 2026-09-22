@@ -80,6 +80,8 @@ export type Product = {
 	seo_description: string
 	image_url?: string
 	media_count?: number
+	/** The picture after the lead, which a listing card shows on hover. */
+	hover_image_url?: string
 	/** The gallery, pictures and videos in order: on the public product only (D134). */
 	media?: VariantImage[]
 	/** The sold count rounded down; absent unless the shop shows counts and it passed the threshold (D134). */
@@ -177,6 +179,8 @@ export type CartOffer = {
 	free_shipping?: boolean
 	remaining?: Money
 	reason?: string
+	/** Checkout applies it by itself when no code is typed (D179); absent on an engine before it. */
+	auto_apply?: boolean
 }
 
 /** How far a basket is from free delivery (D133). */
@@ -297,6 +301,19 @@ export type CheckoutOptions = {
 	currency: string
 }
 
+/** What checkout would charge for a cart now, placing nothing (D185). */
+export type CheckoutQuote = {
+	subtotal: Money
+	shipping: Money
+	shipping_method?: string
+	/** The code checkout took off; `auto_applied` when the shopper typed none and checkout chose it (D179). */
+	discount: { code: string; title: string; auto_applied: boolean; amount: Money; free_shipping?: boolean } | null
+	tax: Money
+	tax_inclusive: boolean
+	payment_fee: Money
+	total: Money
+}
+
 export type ShippingRate = { rate_id: number; name: string; price: Money; zone_id: number }
 
 export type Plugin = { key: string; title: string; settings: Record<string, unknown> }
@@ -406,6 +423,9 @@ export type StoreProfile = {
 
 /** When the shop is open on one day: `day` is mon…sun, the times 24-hour HH:MM. */
 export type OpeningHours = { day: string; opens: string; closes: string }
+
+/** `POST /api/store/password` (D170): a closed store's pass, from its password or a pass still good. */
+export type StorePassAnswer = { token: string; expires_at: string }
 
 export type Vendor = {
 	id: number

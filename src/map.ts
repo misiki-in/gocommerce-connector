@@ -20,6 +20,7 @@ import type {
 	CartOffer,
 	CartLine,
 	Category,
+	CheckoutQuote,
 	CmsPage,
 	Collection,
 	Customer,
@@ -66,6 +67,8 @@ export function productImages(p: Product): string[] {
 	}
 	// variantImages has already resolved its own; resolving twice would prefix twice.
 	push(mediaUrl(p.image_url))
+	// A listing has no media list, only the lead and the next picture for a card's hover.
+	push(mediaUrl(p.hover_image_url))
 	for (const m of arr(p.media)) if (m.kind === 'image') push(mediaUrl(m.url))
 	for (const v of arr(p.variants)) for (const url of variantImages(v)) push(url)
 	return out
@@ -747,6 +750,26 @@ export function toCartOffer(o: CartOffer, currency: string) {
 		amount: o.amount ? toMajor(o.amount) : null,
 		remaining: o.remaining ? toMajor(o.remaining) : null,
 		reason: o.reason ?? '',
+		autoApply: !!o.auto_apply,
+	}
+}
+
+/**
+ * A checkout quote under the names `toOrder` gives the order it becomes, so a
+ * page shows the two the same way.
+ */
+export function toCheckoutQuote(q: CheckoutQuote) {
+	const d = q.discount
+	return {
+		subtotal: toMajor(q.subtotal),
+		shippingCharges: toMajor(q.shipping),
+		shippingMethod: q.shipping_method ?? null,
+		discount: toMajor(d?.amount),
+		coupon: d ? { code: d.code, title: d.title, autoApplied: d.auto_applied, freeShipping: !!d.free_shipping } : null,
+		tax: toMajor(q.tax),
+		taxIncluded: q.tax_inclusive,
+		codCharges: toMajor(q.payment_fee),
+		total: toMajor(q.total),
 	}
 }
 
