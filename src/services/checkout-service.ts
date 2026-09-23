@@ -113,12 +113,12 @@ export class CheckoutService extends BaseService {
 	}
 	/**
 	 * The storefront's generic redirect flow, which it reaches through the code
-	 * `PAYPAL`. The engine has no PayPal gateway; paymentMethodService puts the
-	 * store's first hosted-page gateway — Adyen, Paddle, Lemon Squeezy, Creem,
-	 * Hyperswitch or RevenueCat — under that code, with its own name and a
-	 * neutral icon, because this is the one storefront flow that sends a shopper
-	 * to a URL and back. The shopper returns to the success page; the gateway's
-	 * webhook tells the engine the order is paid.
+	 * `PAYPAL`. paymentMethodService puts the store's first hosted-page gateway
+	 * — PayPal, Adyen, Paddle, Lemon Squeezy, Creem, Hyperswitch or RevenueCat —
+	 * under that code, with its own name and a neutral icon, because this is the
+	 * one storefront flow that sends a shopper to a URL and back. The shopper
+	 * returns to the success page; the gateway's webhook tells the engine the
+	 * order is paid. PayPal's webhook is also what captures the approved payment.
 	 */
 	async checkoutPaypal({ cartId, origin }: { cartId?: string; origin?: string; return_url?: string } = {}) {
 		const gateway = await this.redirectGateway()
@@ -381,7 +381,7 @@ export class CheckoutService extends BaseService {
 }
 
 /** The engine's gateways that take payment on their own hosted page. */
-export const REDIRECT_GATEWAYS = new Set(['adyen', 'paddle', 'lemonsqueezy', 'creem', 'hyperswitch', 'revenuecat'])
+export const REDIRECT_GATEWAYS = new Set(['paypal', 'adyen', 'paddle', 'lemonsqueezy', 'creem', 'hyperswitch', 'revenuecat'])
 
 const unsupported = (method: string, why: string) => new NotSupportedError('CheckoutService', method, why)
 

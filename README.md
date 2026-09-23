@@ -231,7 +231,7 @@ Each of these is a real gap, listed so nobody has to find it in production.
   none of them the gateway the shopper chose. Cash on delivery and Razorpay's
   modal match engine gateways directly. The storefront's redirect flow (which it
   reaches by the code `PAYPAL`) carries the store's first hosted-page gateway —
-  Adyen, Paddle, Lemon Squeezy, Creem, Hyperswitch or RevenueCat — under that
+  PayPal, Adyen, Paddle, Lemon Squeezy, Creem, Hyperswitch or RevenueCat — under that
   gateway's own name and a neutral card icon; a second one cannot be told apart
   from the first and is not offered. GoCommerce's Stripe is a Payment Element (a
   client secret), which this storefront does not mount. Every method left off is
