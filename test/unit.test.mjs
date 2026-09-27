@@ -3561,3 +3561,111 @@ test('a listed product carries its hover picture second, so a card can swap to i
 	assert.deepEqual(p.imageList, ['https://cdn.example/lead.jpg', 'https://cdn.example/back.jpg'])
 	assert.equal(p.thumbnail, 'https://cdn.example/lead.jpg')
 })
+
+const cashfreeMethods = (currency) => async () =>
+	Response.json({ data: { payment_methods: ['cod', 'cashfree'], methods: [{ code: 'cod', name: 'Cash on delivery' }, { code: 'cashfree', name: 'Cashfree' }], currency } })
+
+test('Cashfree is offered under its own name on a rupee store, and not on any other', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	m.clearStoreCache()
+	const { data } = await new m.PaymentMethodService(cashfreeMethods('INR')).list({})
+	assert.deepEqual(
+		data.map((x) => [x.code, x.engineCode, x.name, x.img]),
+		[
+			['COD', 'cod', 'Cash on delivery', '/payment/cod.svg'],
+			['CASHFREE', 'cashfree', 'Cashfree', '/payment/card.svg'],
+		],
+	)
+	m.clearStoreCache()
+	const dollars = await new m.PaymentMethodService(cashfreeMethods('USD')).list({})
+	assert.deepEqual(dollars.data.map((x) => x.code), ['COD'], 'the engine would refuse it only after creating the order')
+	m.clearStoreCache()
+	m.BaseService.setCredentials({ apiUrl: undefined })
+})
+
+const cashfreeOrder = { id: 5, number: 'GC-5', access_token: 'tok', status: 'pending', payment_status: 'pending', payment_provider: 'cashfree', currency: 'INR', total: inr(115119), address: {}, created_at: '', updated_at: '' }
+
+const cashfreeEngine = (payment, bodies = []) =>
+	new m.CheckoutService(async (url, init) => {
+		const path = new URL(String(url)).pathname
+		if (path === '/api/carts/cart_q') return quoteCart('asha@example.com')
+		if (path === '/api/checkout/cashfree') {
+			bodies.push({ body: JSON.parse(init.body), key: init.headers['Idempotency-Key'] })
+			return payment()
+		}
+		return Response.json({ data: [] })
+	})
+
+const withPhone = { ...shopper, phone: '+919800000000' }
+
+test('checkoutCashfree answers in the names the storefront reads, with the store’s order number', async () => {
+	quoteBrowser(withPhone)
+	const bodies = []
+	const svc = cashfreeEngine(
+		() =>
+			Response.json({
+				data: {
+					order: cashfreeOrder,
+					payment: { kind: 'client_action', provider: 'cashfree', reference: 'GC-5-ab12', client_data: { payment_session_id: 'session_1', order_id: 'GC-5-ab12', environment: 'sandbox' } },
+				},
+			}),
+		bodies,
+	)
+	try {
+		const cf = await svc.checkoutCashfree({ cartId: 'cart_q', email: 'asha@example.com', origin: 'https://shop.test/' })
+		assert.deepEqual(cf, { order_no: 'GC-5', payment_session_id: 'session_1', order_id: 'GC-5-ab12', environment: 'sandbox' })
+		assert.equal(bodies[0].body.phone, '+919800000000')
+		assert.equal(bodies[0].body.return_url, 'https://shop.test/checkout/success?cart_id=cart_q')
+		assert.ok(bodies[0].key, 'an Idempotency-Key goes with it')
+
+		await svc.checkoutCashfree({ cartId: 'cart_q', origin: 'http://localhost:5173' })
+		assert.equal(bodies[1].body.return_url, undefined, 'only an https address is sent')
+
+		assert.deepEqual(await svc.captureCashfreePayment({ order_no: 'GC-5' }), { order_no: 'GC-5', status: 'processing' }, 'never paid on its own say-so')
+	} finally {
+		leaveBrowser()
+	}
+})
+
+test('the listed Cashfree method tells the SDK the mode of the session just opened', async () => {
+	quoteBrowser(withPhone)
+	const session = (environment) => () =>
+		Response.json({ data: { order: cashfreeOrder, payment: { kind: 'client_action', provider: 'cashfree', client_data: { payment_session_id: 's', order_id: 'o', environment } } } })
+	try {
+		m.clearStoreCache()
+		const { data } = await new m.PaymentMethodService(cashfreeMethods('INR')).list({})
+		const listed = data.find((x) => x.code === 'CASHFREE')
+		await cashfreeEngine(session('sandbox')).checkoutCashfree({ cartId: 'cart_q' })
+		assert.equal(listed.isTest, true)
+		await cashfreeEngine(session('production')).checkoutCashfree({ cartId: 'cart_q' })
+		assert.equal(listed.isTest, false, 'the storefront opens anything but false as sandbox')
+	} finally {
+		m.clearStoreCache()
+		leaveBrowser()
+	}
+})
+
+test('Cashfree failures: no phone never reaches the engine, a refusal keeps its key, no session is an error', async () => {
+	quoteBrowser(shopper)
+	const bodies = []
+	let answer = () => Response.json({ error: { code: 'internal_error', message: 'could not start payment with cashfree' } }, { status: 500 })
+	const svc = cashfreeEngine(() => answer(), bodies)
+	try {
+		await assert.rejects(svc.checkoutCashfree({ cartId: 'cart_q' }), { status: 400, message: 'Add a phone number to pay with Cashfree.' })
+		assert.equal(bodies.length, 0, 'no order was created to strand')
+	} finally {
+		leaveBrowser()
+	}
+
+	quoteBrowser(withPhone)
+	try {
+		await assert.rejects(svc.checkoutCashfree({ cartId: 'cart_q' }), { status: 500, message: 'could not start payment with cashfree' })
+		await assert.rejects(svc.checkoutCashfree({ cartId: 'cart_q' }))
+		assert.equal(bodies[1].key, bodies[0].key, 'the retry resumes the order the failure left')
+
+		answer = () => Response.json({ data: { order: cashfreeOrder, payment: { kind: 'client_action', provider: 'cashfree', client_data: {} } } })
+		await assert.rejects(svc.checkoutCashfree({ cartId: 'cart_q' }), { status: 502 })
+	} finally {
+		leaveBrowser()
+	}
+})
