@@ -8,13 +8,12 @@ import { cashfreeIsTest, REDIRECT_GATEWAYS } from './checkout-service'
  *
  * The storefront dispatches on an upper-cased code from a fixed list, so a
  * method is offered only where one of its flows can complete it: cash on
- * delivery, Razorpay's and Cashfree's modals, and — through the storefront's redirect flow,
- * which it reaches by the code `PAYPAL` — the first of the engine's hosted-page
- * gateways. That one keeps its own name and gets a neutral card icon, never a
- * PayPal mark. The flow carries no gateway code, so a second hosted-page
- * gateway cannot be told apart from the first and is not offered; nor is
- * Stripe, whose engine gateway is a Payment Element this storefront does not
- * mount. Each method left off is reported once, and every one stays reachable
+ * delivery, Razorpay's and Cashfree's modals, and the engine's hosted-page gateways.
+ * The first of those takes the storefront's redirect flow, by the code `PAYPAL`. The
+ * rest get their own code and `redirects: true`, which a kitcommerce-core of 0.1.60 or
+ * later sends through `checkoutService.checkout(engineCode)`. Each keeps its own name
+ * and gets a neutral card icon, never a PayPal mark. Stripe is not offered, since its
+ * engine gateway is a Payment Element this storefront does not mount. Each method left off is reported once, and every one stays reachable
  * through `checkoutService.checkout(code)` for a storefront that drives its own.
  * Cashfree takes only rupees, and the engine would find that out after creating
  * the order, so it is offered only on a rupee store. It has no icon of its own
@@ -37,7 +36,9 @@ export class PaymentMethodService extends BaseService {
 		const redirect = methods.find((m) => REDIRECT_GATEWAYS.has(m.code))?.code
 		const drive = (code: string) => {
 			if (code === 'cashfree' && options.currency !== 'INR') return undefined
-			return DRIVABLE[code] ?? (code === redirect ? { code: 'PAYPAL', img: '/payment/card.svg' } : undefined)
+			if (DRIVABLE[code]) return DRIVABLE[code]
+			if (code === redirect) return { code: 'PAYPAL', img: '/payment/card.svg' }
+			return REDIRECT_GATEWAYS.has(code) ? { code: code.toUpperCase(), img: '/payment/card.svg' } : undefined
 		}
 		const data = methods
 			.filter((m) => {
@@ -64,6 +65,7 @@ export class PaymentMethodService extends BaseService {
 					active: true,
 					isActive: true,
 				}
+				if (REDIRECT_GATEWAYS.has(m.code) && m.code !== redirect) Object.assign(method, { redirects: true })
 				// A getter, not a value: see cashfreeIsTest.
 				if (m.code === 'cashfree') Object.defineProperty(method, 'isTest', { get: cashfreeIsTest, enumerable: true })
 				return method

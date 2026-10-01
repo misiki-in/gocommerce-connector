@@ -270,7 +270,14 @@ export type CartExtras = {
 	 * The Idempotency-Key of the last checkout attempt, the body it was sent with, and where
 	 * Meta's pixel ran then, which a retry sends again unchanged.
 	 */
-	attempt?: { key: string; body: string; meta?: Record<string, string>; attribution?: Record<string, unknown> } | null
+	attempt?: {
+		key: string
+		body: string
+		meta?: Record<string, string>
+		attribution?: Record<string, unknown>
+		/** What placed the order, while its gateway's window can be opened again: see CheckoutService.place. */
+		placed?: Record<string, unknown>
+	} | null
 }
 
 const extrasKey = (cartId: string) => `gocommerce_cart_${cartId}`

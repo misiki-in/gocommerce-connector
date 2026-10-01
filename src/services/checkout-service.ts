@@ -263,7 +263,8 @@ export class CheckoutService extends BaseService {
 	 */
 	async getQuote({ cartId, method = '' }: { cartId?: string; method?: string } = {}) {
 		const id = cartId || storedCartId()
-		if (!id || !cartExtras(id).shippingAddress) return null
+		// Its order is placed, so the engine would refuse to quote the cart; the total stands.
+		if (!id || !cartExtras(id).shippingAddress || cartExtras(id).attempt?.placed) return null
 		const { extras, email, address } = await this.storedCheckout(id)
 		const code = method.toLowerCase() === 'paypal' ? await this.redirectGateway() : method.toLowerCase()
 		try {
@@ -332,6 +333,11 @@ export class CheckoutService extends BaseService {
 	 * key resumes that order, and without one the shopper is stuck. A changed
 	 * request — a different address, a different method — gets a new key, since
 	 * the engine refuses a key replayed with a different body.
+	 *
+	 * A gateway's modal keeps the key after the order is placed, along with exactly
+	 * what placed it. The cart is converted by then, so a shopper who closes the
+	 * window can pay again only under this key, and the engine then reopens the same
+	 * gateway order rather than risk a second charge on a new one (D232).
 	 */
 	private async place(
 		code: string,
@@ -352,6 +358,7 @@ export class CheckoutService extends BaseService {
 		const serialised = JSON.stringify(body)
 		const retry = extras.attempt?.body === `${code}:${serialised}`
 		const key = retry ? extras.attempt!.key : newKey()
+		const placed = retry ? extras.attempt?.placed : undefined
 		// Where Meta's pixel ran (metaBrowser) is not part of what makes a retry the same
 		// request: the shopper can accept the cookie banner, or Meta set _fbc, between a failed
 		// attempt and the next. A retry sends the first attempt's, since the engine refuses a key
@@ -359,9 +366,11 @@ export class CheckoutService extends BaseService {
 		const meta = retry ? extras.attempt?.meta : metaBrowser()
 		// Where the shopper came from (D168), held the same way: a retry sends what the first attempt did.
 		const attribution = retry ? extras.attempt?.attribution : landingAttribution()
-		saveCartExtras(id, {
-			attempt: { key, body: `${code}:${serialised}`, ...(meta ? { meta } : {}), ...(attribution ? { attribution } : {}) },
-		})
+		if (!placed) {
+			saveCartExtras(id, {
+				attempt: { key, body: `${code}:${serialised}`, ...(meta ? { meta } : {}), ...(attribution ? { attribution } : {}) },
+			})
+		}
 		const metadata = {
 			...extra.metadata,
 			...(meta ? { meta_capi: meta } : {}),
@@ -370,12 +379,13 @@ export class CheckoutService extends BaseService {
 
 		const expected = this.expected.get(id)
 
+		const sent = placed ?? {
+			...(Object.keys(metadata).length ? { ...body, metadata } : body),
+			...(expected ? { quoted_total_minor: toMinor(expected.total, currency) } : {}),
+		}
 		const result = await this.data<CheckoutResult>(`/api/checkout/${encodeURIComponent(code)}`, {
 			method: 'POST',
-			body: {
-				...(Object.keys(metadata).length ? { ...body, metadata } : body),
-				...(expected ? { quoted_total_minor: toMinor(expected.total, currency) } : {}),
-			},
+			body: sent,
 			headers: { 'Idempotency-Key': key },
 		}).catch((err: unknown) => {
 			if (keyAlreadyUsed(err)) {
@@ -408,7 +418,11 @@ export class CheckoutService extends BaseService {
 				}).catch(() => undefined)
 			}
 		}
-		saveCartExtras(id, { attempt: null })
+		const reopenable = result.payment.kind === 'client_action'
+		saveCartExtras(id, { attempt: reopenable ? { key, body: `${code}:${serialised}`, placed: sent } : null })
+		if (reopenable && result.order.payment_status === 'paid') {
+			throw new GoCommerceError(`Order ${result.order.number} is already paid, so there is nothing more to pay.`, 409, 'already_paid')
+		}
 		return result
 	}
 }
@@ -424,8 +438,9 @@ export const REDIRECT_GATEWAYS = new Set(['paypal', 'adyen', 'paddle', 'lemonsqu
  * the call. A session opened in the wrong mode fails. Production, the engine's
  * default, until told otherwise.
  *
- * ponytail: relies on Svelte's $state proxy leaving accessors alone; drop it when
- * the core package reads `environment` from checkoutCashfree's result.
+ * ponytail: its limit is that it works only because Svelte's $state proxy leaves
+ * accessors alone, and only for a storefront that reads `isTest` after the call.
+ * Drop it when @misiki/kitcommerce-core's use-payment reads `cf.environment`.
  */
 let cashfreeEnvironment: string | undefined
 export const cashfreeIsTest = () => cashfreeEnvironment === 'sandbox'
