@@ -81,9 +81,12 @@ jobs:
       - run: npm run build
       - name: live tests
         run: |
-          # Fail rather than skip: in CI an engine that did not answer is a broken run.
+          # pipefail: without it the pipe's status is tee's, and a failing test
+          # passes the step — which it did, on this suite's first run.
+          set -o pipefail
           node --test test/live.test.mjs | tee "$RUNNER_TEMP/live.tap"
-          if grep -q '# SKIP' "$RUNNER_TEMP/live.tap" && grep -q 'no engine at' "$RUNNER_TEMP/live.tap"; then
+          # Fail rather than skip: in CI an engine that did not answer is a broken run.
+          if grep -q 'no engine at' "$RUNNER_TEMP/live.tap"; then
             echo "::error::the live suite skipped — the engine was not reachable"
             exit 1
           fi

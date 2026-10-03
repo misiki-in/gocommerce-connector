@@ -264,6 +264,7 @@ describe('a guest sale', { skip: !live }, () => {
 
 		const placed = await m.checkoutService.checkoutCOD({ cartId: cart.id, origin: 'http://storefront.test' })
 		assert.match(placed.order_no, /\w+-\d+/)
+		seed.guestOrder = { number: placed.order_no, cartId: cart.id }
 
 		const after = await m.cartService.refereshCart()
 		assert.deepEqual(after.lineItems, [], 'the success page empties the bag on this')
@@ -279,7 +280,10 @@ describe('a guest sale', { skip: !live }, () => {
 	})
 
 	test('an order from another browser is not readable from this one', async () => {
-		const res = await m.orderService.listOrdersByParent({ orderNo: 'GC-000001', cartId: 'x' })
+		// Another browser: none of the access tokens the sale above kept.
+		store.clear()
+		const { number, cartId } = seed.guestOrder
+		const res = await m.orderService.listOrdersByParent({ orderNo: number, cartId })
 		assert.deepEqual(res.data, [])
 	})
 
