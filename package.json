@@ -1,0 +1,61 @@
+{
+  "name": "@misiki/gocommerce-connector",
+  "version": "0.1.0",
+  "description": "API connector for GoCommerce with Svelte Commerce",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./services": {
+      "types": "./dist/services/index.d.ts",
+      "import": "./dist/services/index.js",
+      "require": "./dist/services/index.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "tsup && node --test test/*.test.mjs",
+    "prepublishOnly": "npm run typecheck && npm run build"
+  },
+  "keywords": [
+    "gocommerce",
+    "svelte-commerce",
+    "kitcommerce",
+    "connector",
+    "ecommerce",
+    "headless",
+    "storefront",
+    "api",
+    "typescript",
+    "svelte"
+  ],
+  "author": "misiki-in",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/misiki-in/gocommerce-connector.git"
+  },
+  "homepage": "https://github.com/misiki-in/gocommerce-connector#readme",
+  "devDependencies": {
+    "@types/node": "^22.13.1",
+    "tsup": "^8.4.0",
+    "typescript": "^5.7.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

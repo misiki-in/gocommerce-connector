@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # The engine moves on its own schedule. A nightly run against its main is
+  # what notices the day it changes a shape this package translates.
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  # Typecheck, build and the translation tests: no engine needed.
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - run: node --test test/unit.test.mjs
+
+  # The same package against a real engine: GoCommerce's main, on PostgreSQL,
+  # with every storefront module this connector speaks to. Not a mock — a mock
+  # of the engine would test the translation against an idea of the engine.
+  live:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: gocommerce
+          POSTGRES_PASSWORD: gocommerce
+          POSTGRES_DB: gocommerce
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      GOCOMMERCE_URL: http://127.0.0.1:8080
+      GOCOMMERCE_ADMIN_TOKEN: ci-admin-token
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: itswadesh/gocommerce
+          ref: main
+          path: engine
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: engine/go.mod
+          cache-dependency-path: engine/go.sum
+      - name: build the engine
+        working-directory: engine
+        run: go build -tags no_admin -o "$RUNNER_TEMP/gocommerce" ./cmd/gocommerce
+      - name: start the engine
+        run: |
+          "$RUNNER_TEMP/gocommerce" \
+            -db 'postgres://gocommerce:gocommerce@127.0.0.1:5432/gocommerce?sslmode=disable' \
+            -addr 127.0.0.1:8080 -admin-token "$GOCOMMERCE_ADMIN_TOKEN" \
+            -identity -wishlist -reviews -cms -faq -menus \
+            serve > "$RUNNER_TEMP/engine.log" 2>&1 &
+          for i in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:8080/health/ready && exit 0
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/engine.log"
+          exit 1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: live tests
+        run: |
+          # Fail rather than skip: in CI an engine that did not answer is a broken run.
+          node --test test/live.test.mjs | tee "$RUNNER_TEMP/live.tap"
+          if grep -q '# SKIP' "$RUNNER_TEMP/live.tap" && grep -q 'no engine at' "$RUNNER_TEMP/live.tap"; then
+            echo "::error::the live suite skipped — the engine was not reachable"
+            exit 1
+          fi
+      - name: engine log
+        if: always()
+        run: cat "$RUNNER_TEMP/engine.log" || true
