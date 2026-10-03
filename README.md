@@ -180,15 +180,10 @@ It skips, loudly, when there is no engine. CI runs it against GoCommerce's
 
 ## Releasing
 
-Bump `version` in `package.json`, then push a matching tag:
-
-```bash
-git tag v0.1.0 && git push origin v0.1.0
-```
-
-The Publish workflow checks the tag against the version, builds, tests, publishes
-to npm with provenance and creates the GitHub release. It needs an `NPM_TOKEN`
-repository secret that can publish under `@misiki`.
+Bump `version` in `package.json` and push it to `main`. The Publish workflow
+sees a version npm does not have yet, builds, tests, publishes it with
+provenance, and creates the matching `v<version>` tag and GitHub release. It
+needs an `NPM_TOKEN` repository secret that can publish under `@misiki`.
 
 ## License
 

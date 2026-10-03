@@ -1,13 +1,17 @@
 name: Publish
 
-# Push a tag that matches package.json's version — `git tag v0.1.0 && git push
-# origin v0.1.0` — and this publishes that version to npm, with provenance.
+# A release is a version bump on main. When package.json names a version npm
+# does not have yet, this builds, tests, publishes it with provenance and
+# creates the matching v<version> tag and GitHub release. Re-running on a
+# version already published does nothing.
 #
 # Needs one repository secret, NPM_TOKEN: an npm automation (or granular,
 # publish-scoped) token for an account that may publish under @misiki.
 on:
   push:
-    tags: ['v*']
+    branches: [main]
+    paths: [package.json]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -23,21 +27,33 @@ jobs:
           node-version: 22
           registry-url: https://registry.npmjs.org
           cache: npm
-      - name: the tag is the version
+      - name: is there a version to publish
+        id: version
         run: |
+          name=$(node -p "require('./package.json').name")
           version=$(node -p "require('./package.json').version")
-          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::tag $GITHUB_REF_NAME does not match package.json version $version"
-            exit 1
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if npm view "$name@$version" version >/dev/null 2>&1; then
+            echo "$name@$version is already on npm; nothing to do."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
           fi
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm run build
-      - run: node --test test/unit.test.mjs
-      - run: npm publish --provenance --access public
+      - if: steps.version.outputs.publish == 'true'
+        run: npm ci
+      - if: steps.version.outputs.publish == 'true'
+        run: npm run typecheck
+      - if: steps.version.outputs.publish == 'true'
+        run: npm run build
+      - if: steps.version.outputs.publish == 'true'
+        run: node --test test/unit.test.mjs
+      - if: steps.version.outputs.publish == 'true'
+        run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: GitHub release
+        if: steps.version.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes --verify-tag
+          TAG: v${{ steps.version.outputs.version }}
+        run: gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" --generate-notes
