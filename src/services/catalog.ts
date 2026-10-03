@@ -16,6 +16,13 @@ export type CatalogQuery = {
 	category?: string
 	priceFrom?: number
 	priceTo?: number
+	/**
+	 * Attribute answers, `{ color: ['Red', 'Blue'] }`: one handle's values OR-ed,
+	 * different handles AND-ed. The engine filters on them in the whole-shop
+	 * listing only — its category route takes none — so inside a category they
+	 * are not applied.
+	 */
+	attributes?: Record<string, string[]>
 }
 
 export type CatalogPage = {
@@ -141,8 +148,11 @@ export class CatalogService extends BaseService {
 		// A search inside a category, without the index, searches the whole shop:
 		// the engine's category route takes no query and its search takes no
 		// category, and filtering one page client-side would make the count a lie.
+		const attr = Object.entries(q.attributes ?? {}).flatMap(([handle, values]) =>
+			values.filter(Boolean).map((v) => `${handle}:${v}`),
+		)
 		const env = await this.engine<Product[] | null>('/api/products', {
-			query: { q: search, page, limit, channel: this.creds.channel },
+			query: { q: search, page, limit, channel: this.creds.channel, attr },
 		})
 		return { ...toPage(env, (p: Product) => toProduct(p)), categoryHierarchy: hierarchy, sorted }
 	}

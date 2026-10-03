@@ -344,3 +344,16 @@ export type SearchDoc = {
 }
 
 export type SearchResult = { hits: SearchDoc[] | null; query: string; total: number; limit: number; offset: number }
+
+/** One approved vendor's offer on a variant, from `GET /api/variants/{id}/offers`. Cheapest first. */
+export type Offer = {
+	vendor_id: number
+	vendor: string
+	vendor_slug: string
+	price: Money
+	in_stock: boolean
+	variant_id: number
+}
+
+/** A menu's name, from `GET /x/navigation/menus`. */
+export type MenuSummary = { handle: string; title: string }

@@ -1,4 +1,4 @@
-import type { Menu, MenuItem } from '../engine'
+import type { Menu, MenuItem, MenuSummary } from '../engine'
 import { resolveRestLocally } from '../rest-guard'
 import { BaseService } from './base.service'
 import { StoreFacts } from './facts'
@@ -48,6 +48,17 @@ export class MenuService extends BaseService {
 		const menus = await this.engineMenus()
 		if (menus) return { data: menus }
 		return resolveRestLocally('get', '/api/menu')
+	}
+
+	/** Every menu the store keeps, by handle — not only the header and footer. */
+	async listMenus() {
+		return (await this.data<MenuSummary[] | null>('/x/navigation/menus')) ?? []
+	}
+
+	/** One menu by handle, in the storefront's shape: `{ menuId, name, items: [{ id, name, link, items }] }`. */
+	async getMenu(handle: string): Promise<StorefrontMenu> {
+		const m = await this.data<Menu>(`/x/navigation/menus/${encodeURIComponent(handle)}`)
+		return { menuId: m.handle, name: m.title, items: (m.items ?? []).map(toItem) }
 	}
 
 	/** The header and footer menus, or `null` when the module is not there. Cached: a menu is store-level. */

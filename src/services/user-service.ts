@@ -1,7 +1,7 @@
-import type { AuthResponse, Customer } from '../engine'
+import type { AuthResponse, Customer, Order } from '../engine'
 import { GoCommerceError, NotSupportedError } from '../errors'
-import { toUser } from '../map'
-import { endSession, startSession, storedCartId, updateMe } from '../browser'
+import { toOrder, toUser } from '../map'
+import { endSession, placedOrder, startSession, storedCartId, updateMe } from '../browser'
 import { BaseService } from './base.service'
 
 /**
@@ -94,6 +94,45 @@ export class UserService extends BaseService {
 		})
 		startSession(auth)
 		return toUser(auth.record)
+	}
+
+	/**
+	 * Mails the signed-in shopper a link to confirm their address. The engine
+	 * sends none at signup, and a confirmed address is what customer-group
+	 * prices are keyed on. 409 once confirmed; 429 within a minute of the last.
+	 */
+	async requestEmailVerification() {
+		return this.account<{ accepted: boolean }>('/x/identity/me/email-verification', { method: 'POST', auth: true })
+	}
+
+	/** Extends the session another thirty days. The token stays the same. */
+	async refreshSession() {
+		return startSession(await this.account<AuthResponse>('/x/identity/refresh', { method: 'POST', auth: true }))
+	}
+
+	/**
+	 * Files a guest order under the signed-in account, so it appears in their
+	 * order history. The order's access token is the proof of ownership: pass
+	 * it, or leave it out for an order placed from this browser, whose token was
+	 * kept at checkout.
+	 *
+	 * Never done automatically at sign-in. On a shared computer that would file
+	 * one person's orders — address and all — under whoever signed in next.
+	 */
+	async claimOrder({ number, token }: { number: string; token?: string }) {
+		const proof = token ?? placedOrder(number)?.token
+		if (!proof) {
+			throw new GoCommerceError(
+				'This order was not placed from this browser; enter the code from its confirmation.',
+				400,
+			)
+		}
+		const order = await this.account<Order>('/x/identity/me/orders', {
+			method: 'POST',
+			auth: true,
+			body: { number: String(number), token: proof },
+		})
+		return toOrder(order)
 	}
 
 	async deleteUser(): Promise<never> {

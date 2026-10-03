@@ -36,4 +36,12 @@ export interface Credentials {
 	 * listing belong to, when the store sells through more than one.
 	 */
 	channel?: string
+	/**
+	 * `PUBLIC_GOCOMMERCE_LANGUAGE` — the language to ask the engine for, `fr`. Sent
+	 * as `?lang=` on every read, which wins over the browser's Accept-Language
+	 * and needs no CORS preflight. Product titles and descriptions follow it when
+	 * the store has a translator installed, and content pages always do. Unset,
+	 * the engine answers in the store's default language.
+	 */
+	language?: string
 }

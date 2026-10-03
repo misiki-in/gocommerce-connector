@@ -98,6 +98,22 @@ export function toVariant(v: Variant, p: Product, optionless: boolean) {
 	}
 }
 
+/**
+ * The product's category attribute answers — `metadata.category`, keyed by the
+ * attribute's handle — as the specs table's rows. The handle is the only name
+ * the public API carries, so it is shown humanised rather than looked up.
+ */
+function attributesOf(p: Product): { name: string; value: string; handle: string }[] {
+	const answers = p.metadata?.category
+	if (!answers || typeof answers !== 'object' || Array.isArray(answers)) return []
+	return Object.entries(answers as Record<string, unknown>).flatMap(([handle, raw]) => {
+		const values = (Array.isArray(raw) ? raw : [raw]).map((v) => String(v ?? '').trim()).filter(Boolean)
+		if (!values.length) return []
+		const name = handle.replace(/[-_]+/g, ' ').replace(/^./, (c) => c.toUpperCase())
+		return [{ name, value: values.join(', '), handle }]
+	})
+}
+
 export type StorefrontProduct = ReturnType<typeof toProduct>
 
 export function toProduct(p: Product, extra: { categoryHierarchy?: { name: string; slug: string }[] } = {}) {
@@ -166,7 +182,7 @@ export function toProduct(p: Product, extra: { categoryHierarchy?: { name: strin
 		rating: null as number | null,
 		ratingCount: 0,
 		reviewCount: 0,
-		attributes: [] as { name: string; value: string }[],
+		attributes: attributesOf(p),
 		metadata: p.metadata ?? null,
 		createdAt: p.created_at,
 		updatedAt: p.updated_at,
