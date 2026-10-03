@@ -46,6 +46,8 @@ jobs:
     env:
       GOCOMMERCE_URL: http://127.0.0.1:8080
       GOCOMMERCE_ADMIN_TOKEN: ci-admin-token
+      # Lets the b2b suite confirm its accounts' emails; see test/harness.mjs.
+      GOCOMMERCE_TEST_DB: postgres://gocommerce:gocommerce@127.0.0.1:5432/gocommerce
     steps:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
@@ -57,6 +59,9 @@ jobs:
         with:
           go-version-file: engine/go.mod
           cache-dependency-path: engine/go.sum
+      # A route the engine gained is a capability the connector does not have yet.
+      - name: every shopper-facing engine route is reached
+        run: node scripts/route-coverage.mjs engine
       - name: build the engine
         working-directory: engine
         run: go build -tags no_admin -o "$RUNNER_TEMP/gocommerce" ./cmd/gocommerce
@@ -65,7 +70,7 @@ jobs:
           "$RUNNER_TEMP/gocommerce" \
             -db 'postgres://gocommerce:gocommerce@127.0.0.1:5432/gocommerce?sslmode=disable' \
             -addr 127.0.0.1:8080 -admin-token "$GOCOMMERCE_ADMIN_TOKEN" \
-            -identity -wishlist -reviews -cms -faq -menus \
+            -identity -wishlist -reviews -cms -faq -menus -newsletter -contact -b2b \
             serve > "$RUNNER_TEMP/engine.log" 2>&1 &
           for i in $(seq 1 60); do
             curl -fsS http://127.0.0.1:8080/health/ready && exit 0
@@ -84,7 +89,7 @@ jobs:
           # pipefail: without it the pipe's status is tee's, and a failing test
           # passes the step — which it did, on this suite's first run.
           set -o pipefail
-          node --test test/live.test.mjs | tee "$RUNNER_TEMP/live.tap"
+          node --test test/live*.test.mjs | tee "$RUNNER_TEMP/live.tap"
           # Fail rather than skip: in CI an engine that did not answer is a broken run.
           if grep -q 'no engine at' "$RUNNER_TEMP/live.tap"; then
             echo "::error::the live suite skipped — the engine was not reachable"

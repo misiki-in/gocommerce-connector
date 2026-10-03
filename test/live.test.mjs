@@ -19,68 +19,7 @@
 import { before, describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 
-const BASE = (process.env.GOCOMMERCE_URL ?? 'http://127.0.0.1:8080').replace(/\/+$/, '')
-const TOKEN = process.env.GOCOMMERCE_ADMIN_TOKEN ?? ''
-const RUN = Date.now().toString(36)
-
-// ---------------------------------------------------------------- a browser, minus the browser
-//
-// The connector keeps the cart id, the session and order tokens in the
-// shopper's browser. Node has none, so the suite gives it the three globals it
-// reads — the engine is still the real one.
-
-const store = new Map()
-globalThis.localStorage = {
-	getItem: (k) => (store.has(k) ? store.get(k) : null),
-	setItem: (k, v) => store.set(k, String(v)),
-	removeItem: (k) => store.delete(k),
-	clear: () => store.clear(),
-}
-const jar = new Map()
-globalThis.document = {
-	get cookie() {
-		return [...jar].map(([k, v]) => `${k}=${v}`).join('; ')
-	},
-	set cookie(line) {
-		const [pair, ...attrs] = line.split(';')
-		const at = pair.indexOf('=')
-		const name = pair.slice(0, at).trim()
-		const expired = attrs.some((a) => /expires=Thu, 01 Jan 1970/i.test(a))
-		if (expired) jar.delete(name)
-		else jar.set(name, pair.slice(at + 1).trim())
-	},
-}
-globalThis.window = { localStorage: globalThis.localStorage, location: { origin: 'http://storefront.test' } }
-
-const m = await import('../dist/index.js')
-m.BaseService.setCredentials({ apiUrl: BASE })
-m.setStaticStore(() => ({ id: 'from_config', name: 'Test shop', currency: { code: 'USD', symbol: '$' }, plugins: {} }))
-
-let live = false
-try {
-	live = (await fetch(`${BASE}/health`)).ok && Boolean(TOKEN)
-} catch {
-	live = false
-}
-if (!live) console.log(`\n  ! no engine at ${BASE} (or no GOCOMMERCE_ADMIN_TOKEN) — the live tests are skipped\n`)
-
-async function admin(method, path, body) {
-	const res = await fetch(BASE + path, {
-		method,
-		headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json', Accept: 'application/json' },
-		body: body === undefined ? undefined : JSON.stringify(body),
-	})
-	const json = await res.json().catch(() => ({}))
-	if (!res.ok) throw new Error(`${method} ${path} → ${res.status} ${JSON.stringify(json)}`)
-	return json.data
-}
-
-/** Whether a module's routes are mounted: an absent module answers "no route for". */
-async function mounted(path) {
-	const res = await fetch(BASE + path)
-	const body = await res.json().catch(() => ({}))
-	return !(res.status === 404 && /no route/i.test(body?.error?.message ?? ''))
-}
+import { BASE, RUN, store, jar, m, live, admin, mounted } from './harness.mjs'
 
 const seed = {}
 
