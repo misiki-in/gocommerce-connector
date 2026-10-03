@@ -239,8 +239,10 @@ describe('buying for a business (ext/b2b)', { skip: !live }, async () => {
 		'a buyer over the threshold asks for approval; an admin approves it onto the account',
 		{ skip: !on },
 		async () => {
+			// A new browser session for the same buyer: the bag is named, not remembered.
 			await as(buyer)
 			await m.cartService.updateCart2({
+				cartId: b2b.buyerCart,
 				shippingAddress: address,
 				billingAddress: null,
 				isBillingAddressSameAsShipping: true,
