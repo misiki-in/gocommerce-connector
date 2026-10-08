@@ -167,6 +167,12 @@ export function toProduct(p: Product, extra: { categoryHierarchy?: { name: strin
 		slug: p.slug,
 		title: p.title,
 		name: p.title,
+		// The words the store wrote for each picture, by the picture's address.
+		imageAlts: Object.fromEntries(
+			arr(p.media)
+				.filter((m) => m.kind === 'image' && m.alt)
+				.map((m) => [mediaUrl(m.url), m.alt]),
+		),
 		subtitle: null,
 		description: p.description ?? '',
 		status: p.status === 'active' ? 'published' : p.status,
@@ -445,6 +451,8 @@ export function toCartLine(l: CartLine, extra: { slug?: string; thumbnail?: stri
 		inStock: l.in_stock,
 		priceChanged: l.price_changed,
 		currentPrice: toMajor(l.current_price),
+		/** False for a download, a service or a gift card: nothing is posted, so nothing asks where to (D254). */
+		requiresShipping: l.requires_shipping !== false,
 		// The storefront's review step lists only lines marked for checkout. The
 		// engine checks a cart out whole, so every line is.
 		isSelectedForCheckout: true,
@@ -491,6 +499,14 @@ export function toCart(
 		savingAmount: money(discountMinor),
 		couponCode: extras.discount?.code ?? null,
 		discount: extras.discount ?? null,
+		/** The gift card on the bag (D250). Checkout's quote says what it pays; this is only what is on it. */
+		giftCard: extras.giftCard
+			? {
+					last4: extras.giftCard.last4,
+					balance: minorToMajor(extras.giftCard.balanceMinor, extras.giftCard.currency),
+					expiresAt: extras.giftCard.expiresAt,
+				}
+			: null,
 		shippingCharges: money(shippingMinor),
 		shippingRateId: extras.shippingRateId ?? null,
 		shippingMethod: extras.shippingRate?.name ?? null,
@@ -511,7 +527,8 @@ export function toCart(
 					: 'cart'
 				: null,
 		paymentMethod: null,
-		needAddress: lines.length > 0,
+		// A basket of downloads needs no street address: checkout asks only the country and state (D254).
+		needAddress: lines.some((l) => l.requires_shipping !== false),
 		completedAt: c.status === 'converted' ? c.updated_at : null,
 		createdAt: c.created_at,
 		updatedAt: c.updated_at,
@@ -614,6 +631,16 @@ export function toOrder(o: Order) {
 		total: toMajor(o.total),
 		refunded: toMajor(o.refunded),
 		codCharges: toMajor(o.payment_fee),
+		/** What gift cards paid (D250); `total` is what the payment method took, so the order came to the two together. */
+		giftCardAmount: toMajor(o.gift_card),
+		/** Gift cards this order bought, with their codes for the buyer. */
+		giftCards: arr(o.gift_cards).map((g) => ({
+			code: g.code,
+			last4: g.last4,
+			initial: toMajor(g.initial),
+			balance: toMajor(g.balance),
+			active: g.active,
+		})),
 		coupon: code ? { code } : null,
 		userEmail: o.email,
 		email: o.email,
@@ -769,6 +796,7 @@ export function toCheckoutQuote(q: CheckoutQuote) {
 		tax: toMajor(q.tax),
 		taxIncluded: q.tax_inclusive,
 		codCharges: toMajor(q.payment_fee),
+		giftCard: q.gift_card ? { last4: q.gift_card.last4, amount: toMajor(q.gift_card.amount) } : null,
 		total: toMajor(q.total),
 	}
 }

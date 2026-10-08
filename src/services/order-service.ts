@@ -1,9 +1,22 @@
-import type { Order, Product } from '../engine'
+import type { DigitalDownload, Order, Product } from '../engine'
 import { GoCommerceError, NotSupportedError } from '../errors'
 import { toOrder } from '../map'
 import { toMajor } from '../money'
 import { inBrowser, placedOrder, placedOrderForCart, rememberOrder, sessionToken } from '../browser'
 import { BaseService, emptyPage, mediaUrl, toPage } from './base.service'
+
+/**
+ * The gateways whose webhook a store sets up by hand, so it can be missing. An order still pending
+ * is later cancelled with no word to the gateway, and a paid one would go with it, so reading an
+ * order this browser placed asks the gateway too. The engine limits how often it passes that on.
+ * PayPal's route also captures a payment the shopper approved, which is the webhook's job otherwise.
+ */
+const VERIFY: Record<string, (reference: string) => string> = {
+	paystack: (r) => `/x/payments-paystack/transactions/${r}/verify`,
+	flutterwave: (r) => `/x/payments-flutterwave/transactions/${r}/verify`,
+	cashfree: (r) => `/x/payments-cashfree/orders/${r}/verify`,
+	paypal: (r) => `/x/payments-paypal/orders/${r}/capture`,
+}
 
 /**
  * Orders, read back two ways.
@@ -46,18 +59,89 @@ export class OrderService extends BaseService {
 	async getOrder(number: string) {
 		const kept = placedOrder(number)
 		if (kept) {
-			return toOrder(
-				await this.data<Order>(`/api/orders/${encodeURIComponent(number)}`, { query: { token: kept.token } }),
-			)
+			const read = () => this.data<Order>(`/api/orders/${encodeURIComponent(number)}`, { query: { token: kept.token } })
+			const order = await read()
+			const verify = VERIFY[order.payment_provider]
+			if (!verify || !kept.reference || !['pending', 'failed'].includes(order.payment_status)) {
+				return this.withInvoice(order, kept.token)
+			}
+			// A failed check leaves the order as it read; the webhook may still settle it.
+			const checked = await this.data<{ payment_status: string }>(verify(encodeURIComponent(kept.reference)), {
+				method: 'POST',
+			}).catch(() => null)
+			return this.withInvoice(checked && checked.payment_status !== order.payment_status ? await read() : order, kept.token)
 		}
 		if (sessionToken()) {
-			return toOrder(await this.data<Order>(`/x/identity/me/orders/${encodeURIComponent(number)}`, { auth: true }))
+			const order = await this.data<Order>(`/x/identity/me/orders/${encodeURIComponent(number)}`, { auth: true })
+			return this.withInvoice(order, order.access_token)
 		}
 		throw new GoCommerceError(
 			inBrowser() ? 'Sign in to see this order, or open it from the browser that placed it.' : 'order not found',
 			404,
 			'not_found',
 		)
+	}
+
+	/**
+	 * The order with a link to its invoice, once one has been issued. Issued on payment by a module a
+	 * store may not have, so an unpaid order is not asked about and any answer but the invoice is none.
+	 */
+	private async withInvoice(order: Order, token?: string) {
+		const mapped = toOrder(order)
+		if (!token || ['pending', 'failed'].includes(order.payment_status)) return { ...mapped, downloads: null }
+		const path = `/x/invoices/${encodeURIComponent(order.number)}`
+		const [issued, downloads] = await Promise.all([
+			this.data(path, { query: { token } }).then(
+				() => true,
+				() => false,
+			),
+			this.downloads(order.number, token),
+		])
+		const invoiceLink = issued ? this.engineURL(path, { token, ...(this.store ? { store: this.store } : {}) }) : null
+		return { ...mapped, invoiceLink, downloads }
+	}
+
+	/**
+	 * The order's files to download once it is paid (ext/digital, D254), or null from a store
+	 * without the module. Each says whether it can still be had; the link itself is made on click
+	 * by `downloadLink`, because a link lasts minutes.
+	 */
+	private async downloads(number: string, token: string) {
+		const res = await this.data<{ downloads: DigitalDownload[] | null }>(
+			`/x/digital/orders/${encodeURIComponent(number)}`,
+			{ query: { token } },
+		).catch(() => null)
+		if (!res) return null
+		return (res.downloads ?? []).map((d) => ({
+			id: String(d.id),
+			title: d.title,
+			filename: d.filename,
+			size: d.size_bytes,
+			downloads: d.downloads,
+			limit: d.download_limit,
+			expiresAt: d.expires_at,
+			status: d.status,
+		}))
+	}
+
+	/**
+	 * A fresh link to one download of an order, valid for minutes: the URL to send the browser to.
+	 * The order's key is the one this browser holds (placed here, or opened from its email) or the
+	 * signed-in account's. A refusal is a GoCommerceError carrying the engine's sentence — the limit
+	 * reached, the days run out, the order refunded — which is worth showing as it is.
+	 */
+	async downloadLink({ orderNo, id }: { orderNo: string; id: string }) {
+		const number = orderNo.trim()
+		let token = placedOrder(number)?.token
+		if (!token && sessionToken()) {
+			token = (await this.data<Order>(`/x/identity/me/orders/${encodeURIComponent(number)}`, { auth: true })).access_token
+		}
+		if (!token) throw new GoCommerceError('Open this order again to download its files.', 404, 'not_found')
+		const res = await this.data<{ url: string; expires_at: string }>(
+			`/x/digital/orders/${encodeURIComponent(number)}/downloads/${encodeURIComponent(id)}`,
+			{ method: 'POST', query: { token } },
+		)
+		return { url: this.engineURL(res.url, this.store ? { store: this.store } : undefined), expiresAt: res.expires_at }
 	}
 
 	/** Everything the signed-in shopper has bought, once each, most recent first. */
@@ -118,7 +202,7 @@ export class OrderService extends BaseService {
 			{ method: 'POST', body: { contact: contact.trim() } },
 		)
 		rememberOrder({ number: res.order.number, token: res.access_token, cartId: '' })
-		return { data: [toOrder(res.order)] }
+		return { data: [await this.withInvoice(res.order, res.access_token)] }
 	}
 
 	/**
@@ -130,7 +214,7 @@ export class OrderService extends BaseService {
 		const number = orderNo.trim()
 		const order = await this.data<Order>(`/api/orders/${encodeURIComponent(number)}`, { query: { token: key.trim() } })
 		rememberOrder({ number: order.number, token: key.trim(), cartId: '' })
-		return { data: [toOrder(order)] }
+		return { data: [await this.withInvoice(order, key.trim())] }
 	}
 
 	/**
@@ -158,7 +242,7 @@ export class OrderService extends BaseService {
 			{ method: 'POST', body: { code: String(otp).trim() } },
 		)
 		rememberOrder({ number: res.order.number, token: res.access_token, cartId: '' })
-		return { data: [toOrder(res.order)] }
+		return { data: [await this.withInvoice(res.order, res.access_token)] }
 	}
 }
 

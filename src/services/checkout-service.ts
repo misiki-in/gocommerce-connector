@@ -428,7 +428,7 @@ export class CheckoutService extends BaseService {
 }
 
 /** The engine's gateways that take payment on their own hosted page. */
-export const REDIRECT_GATEWAYS = new Set(['paypal', 'adyen', 'paddle', 'lemonsqueezy', 'creem', 'hyperswitch', 'revenuecat'])
+export const REDIRECT_GATEWAYS = new Set(['paypal', 'adyen', 'paddle', 'lemonsqueezy', 'creem', 'hyperswitch', 'revenuecat', 'paystack', 'flutterwave'])
 
 /**
  * Whether the Cashfree session last opened here is a sandbox one. The storefront
@@ -461,7 +461,8 @@ function keyAlreadyUsed(err: unknown): err is GoCommerceError {
 function movedTotal(err: unknown) {
 	if (!(err instanceof GoCommerceError) || err.code !== 'total_changed') return null
 	const now = err.details as CheckoutQuote | null
-	return now?.total ? toCheckoutQuote(now) : null
+	// A total of nothing is a real one: a gift card can cover the order (D250).
+	return now?.total != null ? toCheckoutQuote(now) : null
 }
 
 function shopperAmount(amount: number, currency: string): string {

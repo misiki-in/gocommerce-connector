@@ -187,6 +187,19 @@ test('a cart carries its lines with string ids, selected for checkout', () => {
 	assert.equal('message' in c, false, 'the storefront discards a cart that has a message key')
 })
 
+test('a basket of downloads needs no delivery address; one parcel in it does (D254)', () => {
+	const line = cart().line_items[0]
+	const ebook = { ...line, id: 6, sku: 'GUIDE-PDF', requires_shipping: false }
+	const digital = m.toCart(cart({ line_items: [ebook] }))
+	assert.equal(digital.needAddress, false)
+	assert.equal(digital.lineItems[0].requiresShipping, false)
+	const mixed = m.toCart(cart({ line_items: [ebook, { ...line, requires_shipping: true }] }))
+	assert.equal(mixed.needAddress, true)
+	// An engine from before the field asked every basket for an address, and still does.
+	assert.equal(m.toCart(cart()).needAddress, true)
+	assert.equal(m.toCart(cart()).lineItems[0].requiresShipping, true)
+})
+
 test('a cart’s totals take the kept coupon and delivery choice', () => {
 	const c = m.toCart(cart(), {
 		discount: { discount_id: 1, code: 'TENOFF', title: '10 off', kind: 'fixed', amount_minor: 1000 },
@@ -518,6 +531,7 @@ test('every service the storefront imports by name is exported', () => {
 		'wishlistService',
 		'reviewService',
 		'googleReviewService',
+		'showcaseService',
 		'GoogleReviewService',
 		'customizerService',
 		'CustomizerService',
@@ -785,6 +799,155 @@ test('a hosted-page gateway rides the storefront’s redirect flow under its own
 	assert.equal(data[2].redirects, true)
 })
 
+test('reading an order on a gateway with a check asks it while the order is unpaid, and only then', async () => {
+	const kept = { gocommerce_orders: JSON.stringify([{ number: 'GC-1', token: 't', cartId: 'c', reference: 'ref/1' }]) }
+	globalThis.window = {
+		location: { origin: 'http://storefront.test', hostname: 'storefront.test' },
+		localStorage: { getItem: (k) => kept[k] ?? null, setItem() {}, removeItem() {} },
+	}
+	globalThis.document = { cookie: '' }
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const order = {
+		id: 1, number: 'GC-1', status: 'pending', currency: 'NGN',
+		subtotal: { amount_minor: 1000, currency: 'NGN' }, total: { amount_minor: 1000, currency: 'NGN' },
+		email: 'a@example.com', lines: [], fulfillments: [], address: {}, created_at: '', updated_at: '',
+	}
+	const run = async (provider, status, answer) => {
+		const seen = []
+		let current = status
+		const svc = new m.OrderService(async (url, init) => {
+			seen.push(`${init.method ?? 'GET'} ${url.replace('http://engine.test', '').split('?')[0]}`)
+			if (init.method !== 'POST') return Response.json({ data: { ...order, payment_provider: provider, payment_status: current } })
+			if (answer === 500) return Response.json({ error: { code: 'x', message: 'x' } }, { status: 500 })
+			current = answer
+			return Response.json({ data: { order: 'GC-1', payment_status: answer } })
+		})
+		return { seen, read: await svc.getOrder('GC-1') }
+	}
+	const GET = 'GET /api/orders/GC-1'
+	try {
+		let r = await run('paystack', 'pending', 'paid')
+		assert.deepEqual(r.seen, [GET, 'POST /x/payments-paystack/transactions/ref%2F1/verify', GET, 'GET /x/invoices/GC-1', 'GET /x/digital/orders/GC-1'])
+		assert.equal(r.read.paymentStatus, (await run('cod', 'paid')).read.paymentStatus, 'the paid order is what comes back')
+		r = await run('flutterwave', 'pending', 'pending')
+		assert.deepEqual(r.seen, [GET, 'POST /x/payments-flutterwave/transactions/ref%2F1/verify'])
+		r = await run('cashfree', 'pending', 'pending')
+		assert.deepEqual(r.seen, [GET, 'POST /x/payments-cashfree/orders/ref%2F1/verify'])
+		r = await run('paypal', 'pending', 'pending')
+		assert.deepEqual(r.seen, [GET, 'POST /x/payments-paypal/orders/ref%2F1/capture'])
+		r = await run('paystack', 'pending', 500)
+		assert.equal(r.seen.length, 2, 'a failed check still answers with the order')
+		assert.deepEqual((await run('paystack', 'paid')).seen, [GET, 'GET /x/invoices/GC-1', 'GET /x/digital/orders/GC-1'])
+		assert.deepEqual((await run('adyen', 'pending')).seen, [GET])
+	} finally {
+		delete globalThis.window
+		delete globalThis.document
+	}
+})
+test('a store’s videos are listed for a place, and a store without them has none', async () => {
+	m.clearStoreCache()
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const seen = []
+	let answer = () =>
+		Response.json({
+			data: [{
+				slug: 'ring', title: 'The ring', description: '', label: 'Video',
+				video: { provider: 'youtube', embed_url: 'https://e', watch_url: 'https://w', thumbnail_url: 'https://t' },
+			}],
+		})
+	const svc = new m.ShowcaseService(async (url, init) => {
+		const path = url.replace('http://engine.test', '')
+		if (path.startsWith('/api/plugins')) return Response.json({ data: [{ key: 'showcases' }] })
+		seen.push(`${init.method ?? 'GET'} ${path} ${init.body ?? ''}`.trim())
+		return answer()
+	})
+	assert.deepEqual(await svc.list({ product: 7 }), [{
+		slug: 'ring', title: 'The ring', description: '', label: 'Video', provider: 'youtube',
+		embedUrl: 'https://e', watchUrl: 'https://w', thumbnailUrl: 'https://t',
+	}])
+	assert.equal(seen.pop(), 'GET /x/showcases?product=7')
+	await svc.list({ on: 'home' })
+	assert.equal(seen.pop(), 'GET /x/showcases?on=home')
+	answer = () => Response.json({ error: { code: 'not_found', message: 'none' } }, { status: 404 })
+	assert.deepEqual(await svc.list({ collection: 3 }), [])
+	await svc.recordView('ring')
+	assert.equal(seen.pop(), 'POST /x/showcases/ring/events {"type":"view"}')
+})
+test('the home page carries the store’s banners, with or without a page record', async () => {
+	m.clearStoreCache()
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const banners = {
+		slides: [{ id: 1, title: 'Sale', link: '/sale', image_url: 'https://cdn/d.jpg', mobile_image_url: 'https://cdn/m.jpg' }],
+		grids: [{ title: 'Shop', banners: [{ id: 2, title: 'Rings', link: '/rings', image_url: 'https://cdn/r.jpg' }] }],
+	}
+	const none = () => Response.json({ error: { code: 'not_found', message: 'none' } }, { status: 404 })
+	let answers = { banners: () => Response.json({ data: banners }), cms: none }
+	const svc = new m.PageService(async (url) => (url.includes('/x/banners') ? answers.banners() : answers.cms()))
+	const page = await svc.getOne('home')
+	assert.deepEqual(page.desktopBanners, [{ url: 'https://cdn/d.jpg', link: '/sale', title: 'Sale' }])
+	assert.equal(page.mobileBanners[0].url, 'https://cdn/m.jpg')
+	assert.equal(page.sections[0].title, 'Shop')
+	assert.equal(page.sections[0].banners[0].link, '/rings')
+	assert.deepEqual(page.sections.map((s) => s.screenType), ['desktop', 'mobile'])
+	answers = { banners: none, cms: none }
+	await assert.rejects(svc.getOne('home'), (e) => e.status === 404, 'nothing at all is still the page’s 404')
+})
+test('a product enquiry goes to its own route, naming the product', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const seen = []
+	const svc = new m.EnquiryService(async (url, init) => {
+		seen.push([url.replace('http://engine.test', ''), JSON.parse(init.body)])
+		return Response.json({ data: { status: 'new' } }, { status: 201 })
+	})
+	await svc.create({ name: 'A', email: 'a@example.com', phone: '1', message: 'Price?', productId: '7' })
+	assert.deepEqual(seen.pop(), ['/x/contact/enquiries', { product_id: 7, name: 'A', email: 'a@example.com', phone: '1', body: 'Price?' }])
+	await svc.create({ name: 'A', email: 'a@example.com', message: 'Hello' })
+	assert.equal(seen.pop()[0], '/x/contact/messages')
+})
+test('reads ask in the language the shopper chose, and a bad cookie is ignored', async () => {
+	m.clearStoreCache()
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', language: undefined })
+	globalThis.window = { location: { origin: 'http://s.test', hostname: 's.test' }, localStorage: { getItem: () => null, setItem() {}, removeItem() {} } }
+	const seen = []
+	const svc = new m.PageService(async (url) => {
+		seen.push(url)
+		return Response.json({ data: { slug: 'about', title: 'About', body: '' } })
+	})
+	try {
+		globalThis.document = { cookie: 'x=1; gc_lang=hi' }
+		await svc.getOne('about')
+		assert.match(seen.pop(), /[?&]lang=hi\b/)
+		globalThis.document = { cookie: 'gc_lang=<script>' }
+		await svc.getOne('about')
+		assert.doesNotMatch(seen.pop(), /lang=/)
+	} finally {
+		delete globalThis.window
+		delete globalThis.document
+	}
+})
+test('Paystack and Flutterwave are offered as hosted-page gateways', async () => {
+	m.clearStoreCache()
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const svc = new m.PaymentMethodService(async () =>
+		Response.json({
+			data: {
+				methods: [
+					{ code: 'paystack', name: 'Paystack' },
+					{ code: 'flutterwave', name: 'Flutterwave' },
+				],
+				currency: 'NGN',
+			},
+		}),
+	)
+	const { data } = await svc.list({})
+	assert.deepEqual(
+		data.map((x) => [x.code, x.engineCode, x.redirects]),
+		[
+			['PAYPAL', 'paystack', undefined],
+			['FLUTTERWAVE', 'flutterwave', true],
+		],
+	)
+})
 test('the engine’s PayPal rides the storefront’s redirect flow', async () => {
 	m.clearStoreCache()
 	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
@@ -1974,6 +2137,47 @@ test('the newsletter sign-up is on exactly when the newsletter module is', async
 	}
 })
 
+test('the EMI note comes from the engine alone, and only usable numbers come with it', async () => {
+	const read = async (list) => {
+		m.clearStoreCache()
+		m.BaseService.setCredentials({ apiUrl: 'http://emi.test' })
+		// A static record that would switch it on with an offer must not count.
+		m.setStaticStore(() => ({ id: 'from_config', name: 'Shop', plugins: { emiNote: { active: true, noCostMonths: 6 } } }))
+		const svc = new m.StoreService(async (url) => {
+			const path = new URL(String(url)).pathname
+			if (path === '/api/checkout') return Response.json({ data: { currency: 'INR', methods: [] } })
+			if (path === '/api/plugins') return Response.json({ data: list })
+			return Response.json({ data: [] })
+		})
+		return (await svc.getStoreByIdOrDomain()).plugins.emiNote
+	}
+	assert.deepEqual(await read([]), { active: false })
+	assert.deepEqual(await read([{ key: 'emi-note', settings: { no_cost_months: 3, min_price: 2999.5 } }]), {
+		active: true,
+		noCostMonths: 3,
+		minPrice: 299950,
+	})
+	assert.deepEqual(await read([{ key: 'emi-note', settings: { no_cost_months: '6', min_price: '3000' } }]), {
+		active: true,
+		noCostMonths: 6,
+		minPrice: 300000,
+	})
+	for (const settings of [
+		{},
+		{ no_cost_months: null, min_price: null },
+		{ no_cost_months: '', min_price: '' },
+		{ no_cost_months: 0, min_price: 0 },
+		{ no_cost_months: 1, min_price: -5 },
+		{ no_cost_months: 2.5, min_price: 'lots' },
+		{ no_cost_months: true, min_price: [] },
+	]) {
+		const note = await read([{ key: 'emi-note', settings }])
+		assert.equal(note.active, true)
+		assert.equal(note.noCostMonths, undefined, JSON.stringify(settings))
+		assert.equal(note.minPrice, undefined, JSON.stringify(settings))
+	}
+})
+
 // ---------------------------------------------------------------- 0.12.0: add-ons, suggestions, offers (D133)
 
 const withCart = async (fn) => {
@@ -3141,6 +3345,7 @@ test('a quote asks the engine with what checkout sends, and its figures arrive i
 			tax: 162.19,
 			taxIncluded: false,
 			codCharges: 40,
+			giftCard: null,
 			total: 1151.19,
 		})
 		assert.deepEqual(asked[0], { cart: 'cart_q', country: 'IN', state: 'Maharashtra', shipping_rate_id: '7', method: 'cod', email: 'asha@example.com' })
@@ -3399,7 +3604,7 @@ test('a total that moved since the quote is refused with the new figures, and co
 		const changes = []
 		svc.expectTotal({ cartId: 'cart_q', total: 1151, onChange: (...args) => changes.push(args) })
 		const refused = await svc.checkoutCOD({ cartId: 'cart_q' }).catch((e) => e)
-		const figures = { subtotal: 1000, shippingCharges: 150, shippingMethod: 'Express', discount: 0, coupon: null, tax: 51, taxIncluded: false, codCharges: 0, total: 1201 }
+		const figures = { subtotal: 1000, shippingCharges: 150, shippingMethod: 'Express', discount: 0, coupon: null, tax: 51, taxIncluded: false, codCharges: 0, giftCard: null, total: 1201 }
 		const sentence = 'Your total changed to ₹1,201. Check the new total and confirm again.'
 		assert.deepEqual([refused.status, refused.message, refused.details], [409, sentence, figures])
 		assert.deepEqual(changes, [[figures, sentence]])
@@ -3700,5 +3905,177 @@ test('closing Cashfree’s window and paying again sends the first request under
 		assert.equal(bodies[2].key, bodies[0].key)
 	} finally {
 		leaveBrowser()
+	}
+})
+
+test('the shop assistant hides without the module, and draws cards from the engine in major units', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: undefined, baseDomain: undefined })
+	const seen = []
+	const answer = (status, body) => async (url, init) => {
+		seen.push({ url: String(url), init })
+		return new Response(JSON.stringify(body), { status })
+	}
+	assert.equal(await new m.ShopAssistantService(answer(404, { error: { message: 'no' } })).enabled(), false)
+	assert.equal(await new m.ShopAssistantService(answer(200, { data: { enabled: false } })).enabled(), false)
+	assert.equal(await new m.ShopAssistantService(answer(200, { data: { enabled: true } })).enabled(), true)
+
+	const svc = new m.ShopAssistantService(
+		answer(200, {
+			data: {
+				reply: 'Let me look.',
+				closest: true,
+				handover: false,
+				faqs: [{ id: 3, question: 'Q', answer: 'A' }],
+				products: [
+					{
+						product_id: 7,
+						slug: 'hoops',
+						title: 'Hoops',
+						image_url: 'https://cdn.example/h.jpg',
+						price: money(150000, 'INR'),
+						compare_at_price: money(200000, 'INR'),
+						variant_id: 11,
+					},
+					{ product_id: 8, slug: 'studs', title: 'Studs', price: money(1000, 'JPY'), variant_id: null },
+				],
+			},
+		}),
+	)
+	const out = await svc.turn([{ role: 'user', text: 'earrings' }])
+	const last = seen.at(-1)
+	assert.match(last.url, /\/x\/shop-assistant\/turn$/)
+	assert.deepEqual(JSON.parse(last.init.body), { messages: [{ role: 'user', text: 'earrings' }] })
+	assert.equal(out.closest, true)
+	assert.deepEqual(out.products[0], {
+		productId: 7,
+		slug: 'hoops',
+		title: 'Hoops',
+		image: 'https://cdn.example/h.jpg',
+		price: 1500,
+		compareAtPrice: 2000,
+		currency: 'INR',
+		variantId: 11,
+	})
+	assert.equal(out.products[1].price, 1000, 'yen has no decimals')
+	assert.equal(out.products[1].variantId, null)
+
+	const limited = new m.ShopAssistantService(answer(429, { error: { message: 'Wait a little.', code: 'rate_limited' } }))
+	await assert.rejects(limited.turn([{ role: 'user', text: 'x' }]), /Wait a little/)
+})
+
+// ---------------------------------------------------------------- gift cards (D250)
+
+test('a gift card goes on the cart, is shown by its last four, and comes off again', async () => {
+	const kept = {}
+	globalThis.window = {
+		location: { origin: 'http://storefront.test' },
+		localStorage: {
+			getItem: (k) => (k === 'cart_id' ? 'cart1' : (kept[k] ?? null)),
+			setItem: (k, v) => (kept[k] = v),
+			removeItem: (k) => delete kept[k],
+		},
+	}
+	globalThis.document = { cookie: '' }
+	try {
+		m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+		const calls = []
+		const svc = new m.CartService(async (url, init = {}) => {
+			const u = new URL(String(url))
+			calls.push([init.method ?? 'GET', u.pathname, init.body ? JSON.parse(init.body) : undefined])
+			if (u.pathname.endsWith('/gift-card') && init.method === 'PUT') {
+				return Response.json({ data: { last4: 'WXYZ', balance: money(50000, 'INR'), expires_at: null } })
+			}
+			if (u.pathname.endsWith('/gift-card')) return new Response(null, { status: 204 })
+			return Response.json({ data: { id: 'cart1', status: 'open', currency: 'INR', line_items: [cartLine()], item_count: 1, subtotal: money(4900, 'INR') } })
+		})
+		const cart = await svc.applyGiftCard({ code: ' abcd-efgh ' })
+		assert.deepEqual(calls[0], ['PUT', '/api/carts/cart1/gift-card', { code: 'abcd-efgh' }])
+		assert.deepEqual(cart.giftCard, { last4: 'WXYZ', balance: 500, expiresAt: null })
+		assert.ok(!JSON.stringify(kept).includes('abcd'), 'the code itself is not kept in the browser')
+
+		const after = await svc.removeGiftCard()
+		assert.ok(calls.some(([method, path]) => method === 'DELETE' && path === '/api/carts/cart1/gift-card'))
+		assert.equal(after.giftCard, null)
+	} finally {
+		delete globalThis.window
+		delete globalThis.document
+	}
+})
+
+test('the engine’s refusal of a gift card reaches the shopper word for word', async () => {
+	await withCart(async () => {
+		m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+		const svc = new m.CartService(async () =>
+			Response.json({ error: { code: 'bad_request', message: 'that gift card has expired' } }, { status: 400 }),
+		)
+		await assert.rejects(svc.applyGiftCard({ code: 'X' }), /that gift card has expired/)
+	})
+})
+
+test('a quote and an order carry what the gift card paid, and the cards the order bought', () => {
+	const q = m.toCheckoutQuote({
+		subtotal: money(150000, 'INR'),
+		shipping: money(0, 'INR'),
+		discount: null,
+		tax: money(0, 'INR'),
+		tax_inclusive: true,
+		payment_fee: money(0, 'INR'),
+		gift_card: { last4: 'WXYZ', amount: money(50000, 'INR') },
+		total: money(100000, 'INR'),
+	})
+	assert.deepEqual(q.giftCard, { last4: 'WXYZ', amount: 500 })
+	assert.equal(q.total, 1000)
+	assert.equal(m.toCheckoutQuote({ ...q, subtotal: money(1, 'INR'), shipping: money(0, 'INR'), tax: money(0, 'INR'), payment_fee: money(0, 'INR'), total: money(1, 'INR'), gift_card: null }).giftCard, null)
+
+	const o = m.toOrder({
+		id: 1, number: 'GC-1', status: 'confirmed', payment_status: 'paid', payment_provider: 'cod', currency: 'INR',
+		subtotal: money(150000, 'INR'), shipping: money(0, 'INR'), discount: money(0, 'INR'), tax: money(0, 'INR'),
+		tax_inclusive: true, total: money(100000, 'INR'), refunded: money(0, 'INR'), gift_card: money(50000, 'INR'),
+		gift_cards: [{ code: 'ABCDEFGHJKLMNPQR', last4: 'NPQR', initial: money(100000, 'INR'), balance: money(100000, 'INR'), active: true }],
+		email: 'a@example.com', address: { line1: '1 Way', city: 'Pune', postal_code: '411001', country: 'IN' },
+		line_items: null, fulfillments: null, created_at: '2026-11-07T00:00:00Z', updated_at: '2026-11-07T00:00:00Z',
+	})
+	assert.equal(o.giftCardAmount, 500)
+	assert.equal(o.total, 1000)
+	assert.deepEqual(o.giftCards, [{ code: 'ABCDEFGHJKLMNPQR', last4: 'NPQR', initial: 1000, balance: 1000, active: true }])
+})
+
+test('a paid order lists its downloads, and a link is minted with the key this browser holds (D254)', async () => {
+	const kept = { gocommerce_orders: JSON.stringify([{ number: 'GC-2', token: 'key-2', cartId: 'c' }]) }
+	globalThis.window = {
+		location: { origin: 'http://storefront.test', hostname: 'storefront.test' },
+		localStorage: { getItem: (k) => kept[k] ?? null, setItem() {}, removeItem() {} },
+	}
+	globalThis.document = { cookie: '' }
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const order = {
+		id: 2, number: 'GC-2', status: 'delivered', payment_status: 'paid', payment_provider: 'razorpay', currency: 'INR',
+		subtotal: { amount_minor: 49900, currency: 'INR' }, total: { amount_minor: 49900, currency: 'INR' },
+		email: 'a@example.com', lines: [], fulfillments: [], address: {}, created_at: '', updated_at: '',
+	}
+	const asked = []
+	try {
+		const svc = new m.OrderService(async (url, init) => {
+			const u = new URL(url)
+			asked.push(`${init.method ?? 'GET'} ${u.pathname} token=${u.searchParams.get('token')}`)
+			if (u.pathname === '/x/digital/orders/GC-2') {
+				return Response.json({ data: { downloads: [{ id: 9, order_line_id: 1, title: 'Guide', filename: 'guide.pdf',
+					size_bytes: 300000, downloads: 0, download_limit: 3, expires_at: null, status: 'ready' }] } })
+			}
+			if (u.pathname === '/x/digital/orders/GC-2/downloads/9') {
+				return Response.json({ data: { url: '/x/digital/download/abc', expires_at: '2026-11-09T10:00:00Z' } }, { status: 201 })
+			}
+			if (u.pathname.startsWith('/x/invoices/')) return Response.json({ error: { code: 'not_found', message: 'no' } }, { status: 404 })
+			return Response.json({ data: order })
+		})
+		const read = await svc.getOrder('GC-2')
+		assert.deepEqual(read.downloads, [{ id: '9', title: 'Guide', filename: 'guide.pdf', size: 300000, downloads: 0, limit: 3, expiresAt: null, status: 'ready' }])
+		const link = await svc.downloadLink({ orderNo: 'GC-2', id: '9' })
+		assert.equal(new URL(link.url).origin + new URL(link.url).pathname, 'http://engine.test/x/digital/download/abc')
+		assert.ok(asked.includes('POST /x/digital/orders/GC-2/downloads/9 token=key-2'), asked.join('\n'))
+		await assert.rejects(svc.downloadLink({ orderNo: 'GC-9', id: '9' }), /Open this order again/)
+	} finally {
+		delete globalThis.window
+		delete globalThis.document
 	}
 })

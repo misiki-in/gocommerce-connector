@@ -37,7 +37,22 @@ export class ProductService extends CatalogService {
 				// The page renders without stars rather than not at all.
 			}
 		}
-		return product
+		return { ...product, digital: await this.digital(p) }
+	}
+
+	/**
+	 * What a product that is downloaded rather than posted gives its buyer (ext/digital, D254):
+	 * `{ files, formats }` for "Instant download · PDF", or null. Asked only of a product none of
+	 * whose variants is sent, so a store's ordinary pages pay nothing; a store without the module,
+	 * or a service sold with no files, answers null rather than claiming a download.
+	 */
+	private async digital(p: Product): Promise<{ files: number; formats: string[] } | null> {
+		const variants = p.variants ?? []
+		if (!variants.length || variants.some((v) => v.requires_shipping !== false)) return null
+		const found = await this.data<Record<string, { files: number; formats: string[] }>>('/x/digital/products', {
+			query: { ids: String(p.id) },
+		}).catch(() => null)
+		return found?.[String(p.id)] ?? null
 	}
 
 	private async findProduct(slug: string): Promise<Product> {

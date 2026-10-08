@@ -69,7 +69,7 @@ export class MenuService extends BaseService {
 	 */
 	async engineMenus(): Promise<StorefrontMenu[] | null> {
 		if (!(await this.facts.pluginOn('navigation'))) return null
-		return remember(`${this.engineBase()}|${this.store ?? ''}|menus`, async () => {
+		return remember(`${this.engineBase()}|${this.store ?? ''}|${this.language ?? ''}|menus`, async () => {
 			const out: StorefrontMenu[] = []
 			for (const part of ['header', 'footer'] as const) {
 				try {

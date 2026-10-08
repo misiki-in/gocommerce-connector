@@ -266,6 +266,8 @@ export type CartExtras = {
 	shippingRateId?: string | null
 	shippingRate?: { id: string; name: string; minor: number; currency: string } | null
 	discount?: AppliedDiscount | null
+	/** The gift card on the cart, as the engine answered when it was applied. The cart does not carry it, and the code is not kept. */
+	giftCard?: { last4: string; balanceMinor: number; currency: string; expiresAt: string | null } | null
 	/**
 	 * The Idempotency-Key of the last checkout attempt, the body it was sent with, and where
 	 * Meta's pixel ran then, which a retry sends again unchanged.

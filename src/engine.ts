@@ -143,6 +143,21 @@ export type CartLine = {
 	design_id?: string
 	design_preview_url?: string
 	compare_at_price?: Money
+	/** Whether the line is sent at all; absent from an engine before D254, which asked every basket for an address. */
+	requires_shipping?: boolean
+}
+
+/** One file of one paid order line, as its buyer sees it (ext/digital, D254). */
+export type DigitalDownload = {
+	id: number
+	order_line_id: number
+	title: string
+	filename: string
+	size_bytes: number
+	downloads: number
+	download_limit: number | null
+	expires_at: string | null
+	status: 'ready' | 'expired' | 'used_up' | 'revoked'
 }
 
 /** A variant offered with a product, optionally at an offer price (D133). */
@@ -217,6 +232,22 @@ export type AppliedDiscount = {
 	free_shipping?: boolean
 }
 
+/** What `PUT /api/carts/{token}/gift-card` answers (D250): enough to show what is left, nothing about whose it is. */
+export type GiftCardBalance = {
+	last4: string
+	balance: Money
+	expires_at: string | null
+}
+
+/** A gift card an order bought, shown to its buyer on that order (D250). */
+export type IssuedGiftCard = {
+	code: string
+	last4: string
+	initial: Money
+	balance: Money
+	active: boolean
+}
+
 export type Address = {
 	name?: string
 	phone?: string
@@ -278,6 +309,10 @@ export type Order = {
 	name?: string
 	address: Address
 	discounts?: AppliedDiscount[] | null
+	/** What gift cards paid (D250); the order's full value is `total` plus this. Absent on an engine before it. */
+	gift_card?: Money
+	/** Gift cards this order bought. */
+	gift_cards?: IssuedGiftCard[] | null
 	line_items: OrderLine[] | null
 	fulfillments: Fulfillment[] | null
 	access_token?: string
@@ -311,12 +346,30 @@ export type CheckoutQuote = {
 	tax: Money
 	tax_inclusive: boolean
 	payment_fee: Money
+	/** What a gift card on the cart pays (D250); `total` is what is left for the payment method. */
+	gift_card?: { last4: string; amount: Money } | null
 	total: Money
 }
 
 export type ShippingRate = { rate_id: number; name: string; price: Money; zone_id: number }
 
 export type Plugin = { key: string; title: string; settings: Record<string, unknown> }
+
+/** `GET /x/banners` (ext/banners): a page's slides and its grids of tiles. */
+export type PublicBanner = { id: number; title: string; link: string; image_url: string; mobile_image_url?: string }
+export type PublicBanners = {
+	slides?: PublicBanner[] | null
+	grids?: { title: string; banners?: PublicBanner[] | null }[] | null
+}
+
+/** One row of `GET /x/showcases` (ext/showcases). */
+export type PublicShowcase = {
+	slug: string
+	title: string
+	description: string
+	label: string
+	video: { provider: string; embed_url: string; watch_url: string; thumbnail_url?: string }
+}
 
 /** `GET /x/google-reviews/place` (ext/google-reviews): Google's answer just now, never stored. */
 export type GooglePlace = {
@@ -401,6 +454,7 @@ export type StoreProfile = {
 	phone: string
 	support_url: string
 	language: string
+	languages?: string[]
 	/** Whether the store's prices include tax (D177); absent on an engine before it. */
 	prices_include_tax?: boolean
 	/** Where the engine serves this store's pictures resized (D139); absent on an engine before it. */
