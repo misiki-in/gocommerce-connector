@@ -29,6 +29,7 @@
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
     "test": "tsup && node --test test/*.test.mjs",
+    "p": "npm run build && npm publish --access public",
     "prepublishOnly": "npm run typecheck && npm run build"
   },
   "keywords": [
