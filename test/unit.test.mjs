@@ -96,6 +96,29 @@ test('a product crosses with string ids, major-unit prices and only live variant
 	assert.equal(p.manageInventory, true)
 })
 
+test('an engine upload is loaded from the engine, never the storefront’s own origin', () => {
+	const uploaded = () =>
+		m.toProduct(
+			product({
+				image_url: '/media/lead.png',
+				variants: [variant({ image: null, images: [{ media_id: 2, url: '/media/v11.png', kind: 'image' }] })],
+			}),
+		)
+	try {
+		m.BaseService.setCredentials({ apiUrl: 'https://engine.example/', proxyPath: '/backend' })
+		assert.deepEqual(uploaded().images.split(','), ['/backend/media/lead.png', '/backend/media/v11.png'])
+		assert.equal(uploaded().variants[0].thumbnail, '/backend/media/v11.png')
+
+		m.BaseService.setCredentials({ proxyPath: '' })
+		assert.equal(uploaded().thumbnail, 'https://engine.example/media/lead.png')
+
+		assert.equal(m.toProduct(product()).thumbnail, 'https://cdn.example/lead.jpg', 'a linked picture stays put')
+		assert.equal(m.mediaUrl('//cdn.example/x.png'), '//cdn.example/x.png')
+	} finally {
+		m.BaseService.setCredentials({ apiUrl: '', proxyPath: '' })
+	}
+})
+
 test('a compare-at price is the struck-through mrp', () => {
 	const p = m.toProduct(product({ variants: [variant({ compare_at_price: money(3000) })] }))
 	assert.equal(p.price, 25)

@@ -32,6 +32,7 @@ import type {
 } from './engine'
 import { minorToMajor, toMajor, type Money } from './money'
 import type { CartExtras, StorefrontAddress } from './browser'
+import { mediaUrl } from './services/base.service'
 
 const str = (v: number | string | null | undefined): string => (v === null || v === undefined ? '' : String(v))
 
@@ -45,7 +46,8 @@ const liveVariants = (p: Product): Variant[] => arr(p.variants).filter((v) => v.
 function variantImages(v: Variant): string[] {
 	const out: string[] = []
 	for (const img of [v.image, ...arr(v.images)]) {
-		if (img?.url && (img.kind ?? 'image') === 'image' && !out.includes(img.url)) out.push(img.url)
+		const url = mediaUrl(img?.url)
+		if (url && (img?.kind ?? 'image') === 'image' && !out.includes(url)) out.push(url)
 	}
 	return out
 }
@@ -57,10 +59,11 @@ function variantImages(v: Variant): string[] {
  */
 export function productImages(p: Product): string[] {
 	const out: string[] = []
-	const push = (url?: string) => {
+	const push = (url?: string | null) => {
 		if (url && !out.includes(url)) out.push(url)
 	}
-	push(p.image_url)
+	// variantImages has already resolved its own; resolving twice would prefix twice.
+	push(mediaUrl(p.image_url))
 	for (const v of arr(p.variants)) for (const url of variantImages(v)) push(url)
 	return out
 }
@@ -203,9 +206,9 @@ export function fromSearchDoc(d: SearchDoc) {
 		mrp: price,
 		minPrice: price,
 		maxPrice: minorToMajor(d.price_max_minor, d.currency),
-		thumbnail: d.image ?? null,
-		image_url: d.image ?? null,
-		images: d.image ?? '',
+		thumbnail: mediaUrl(d.image),
+		image_url: mediaUrl(d.image),
+		images: mediaUrl(d.image) ?? '',
 		stock: d.in_stock ? 1 : 0,
 		hasStock: d.in_stock,
 		// The index cannot say how much is left, only whether any is; a card
@@ -259,7 +262,7 @@ export function toCategory(c: Category): StorefrontCategory {
 		level: c.depth,
 		rank: c.position,
 		childCount: c.child_count,
-		thumbnail: (c.metadata?.image as string | undefined) ?? null,
+		thumbnail: mediaUrl(c.metadata?.image as string | undefined),
 		description: (c.metadata?.description as string | undefined) ?? null,
 		isActive: true,
 		isFeatured: false,
@@ -280,7 +283,7 @@ export function toCollection(c: Collection) {
 		description: c.description || null,
 		subTitle: null,
 		rank: str(c.position),
-		thumbnail: (c.metadata?.image as string | undefined) ?? null,
+		thumbnail: mediaUrl(c.metadata?.image as string | undefined),
 		isActive: true,
 		metaTitle: c.title,
 		metaDescription: c.description || null,
@@ -378,7 +381,7 @@ export function toCartLine(l: CartLine, extra: { slug?: string; thumbnail?: stri
 		title: l.title,
 		name: l.title,
 		slug: extra.slug ?? '',
-		thumbnail: extra.thumbnail ?? null,
+		thumbnail: mediaUrl(extra.thumbnail),
 		variantTitle: l.variant_label ?? '',
 		qty: l.quantity,
 		price: toMajor(l.unit_price),
@@ -513,8 +516,8 @@ function toOrderLine(l: OrderLine, currency: string) {
 		title: l.title,
 		name: l.title,
 		slug: '',
-		thumbnail: l.image_url ?? null,
-		img: l.image_url ?? null,
+		thumbnail: mediaUrl(l.image_url),
+		img: mediaUrl(l.image_url),
 		variantTitle: l.variant_label ?? '',
 		qty: l.quantity,
 		shippedQty: l.shipped_quantity,

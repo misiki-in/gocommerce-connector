@@ -16,6 +16,22 @@ export type EngineRequest = {
 }
 
 /**
+ * A media URL the shopper's browser can load. The engine answers its own
+ * uploads root-relative (`/media/ab12.png`), which a browser resolves against
+ * the storefront's origin, where no such file is. Through the proxy path when
+ * one is set — a root-relative path that reads the same in SSR and in the
+ * browser, so hydration agrees — and otherwise from the engine's origin.
+ * Absolute URLs, such as pictures the media library links rather than holds,
+ * pass through untouched.
+ */
+export function mediaUrl(url: string | null | undefined): string | null {
+	if (!url) return null
+	if (!url.startsWith('/') || url.startsWith('//')) return url
+	const { apiUrl, proxyPath } = BaseService.getCredentials()
+	return (proxyPath || apiUrl || '').trim().replace(/\/+$/, '') + url
+}
+
+/**
  * BaseService — the one place this connector talks to the engine.
  *
  * - Credentials arrive through the static `setCredentials` (both hooks), never
