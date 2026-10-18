@@ -26,6 +26,7 @@ PUBLIC_GOCOMMERCE_API_URL=https://api.shop.example    # the engine
 PUBLIC_GOCOMMERCE_PROXY_PATH=/gocommerce              # see "The browser and CORS"
 # PUBLIC_GOCOMMERCE_CHANNEL=web                       # a sales channel, if the store has several
 # PUBLIC_GOCOMMERCE_STORE=acme                        # under `gocommerce platform`, on a shared API host
+# PUBLIC_GOCOMMERCE_BASE_DOMAIN=shopnx.in             # or every store: acme.shopnx.in is store `acme`
 # PUBLIC_GOCOMMERCE_LANGUAGE=fr                       # ask for this language (?lang=) on every read
 ```
 
@@ -76,6 +77,33 @@ location /            { proxy_pass http://storefront:3000; }
 
 Serving the storefront and the engine from one origin works too; then leave the
 proxy path unset and point the API URL at that origin.
+
+### One storefront for every store
+
+Under `gocommerce platform` a storefront can sell for one store, named in
+`PUBLIC_GOCOMMERCE_STORE`, or for all of them. Set `PUBLIC_GOCOMMERCE_BASE_DOMAIN`
+to the domain the engine hands out subdomains of and point every
+`<slug>.<base domain>` at the one deployment: a request for `acme.shopnx.in` is
+sent to the engine with `X-Store: acme`, by the same rule the engine applies to
+its own host (one label, case-insensitive, a port ignored). A host outside the
+base domain falls back to `PUBLIC_GOCOMMERCE_STORE`, or to no store at all.
+
+The browser knows its own host. The server does not, so tell the connector where
+to read it, once, from `src/hooks.server.ts`:
+
+```ts
+import { getRequestEvent } from '$app/server'
+import { setRequestHost } from '@misiki/gocommerce-connector'
+
+setRequestHost(() => getRequestEvent().url.hostname)
+```
+
+Store-level facts (plugins, currency, menus) are cached per store, so two stores
+on one process never see each other's. A host under the base domain that names
+a store the engine does not have makes `getStoreByIdOrDomain` throw a
+`GoCommerceError` with status 404 and "store not found" in its message, which
+Svelte Commerce renders as its own "Store not found" page. An engine that is
+down stays best-effort: the storefront renders from its static record.
 
 ## What maps to what
 

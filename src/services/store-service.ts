@@ -1,8 +1,18 @@
+import { GoCommerceError } from '../errors'
 import { readStaticStore } from '../static-store'
 import { BaseService } from './base.service'
 import { StoreFacts } from './facts'
 import { MenuService } from './menu-service'
 import { NewsletterService } from './newsletter-service'
+
+/**
+ * The engine's "no such store" answer to an `X-Store` it cannot resolve, and
+ * nothing else: a 404 for a product or a page is a different question.
+ */
+const isStoreMissing = (err: unknown) =>
+	err instanceof GoCommerceError &&
+	err.status === 404 &&
+	(err.code === 'store_not_found' || /store not found|no such store/i.test(err.message))
 
 /** `$`, `€`, `₹` — from the platform's own tables rather than a list kept here. */
 function symbolFor(code: string): string {
@@ -35,6 +45,17 @@ export class StoreService extends BaseService {
 
 	async getStoreByIdOrDomain(_args: { storeId?: string; domain?: string } = {}) {
 		const base = await readStaticStore()
+		// The one failure that is not best-effort: a host under `baseDomain` naming
+		// a store the engine has never heard of. That page is a 404, not a render
+		// of the static record, so the storefront's 404 route can take it from here.
+		const store = this.store
+		if (store) {
+			await this.facts.plugins().catch((err) => {
+				if (isStoreMissing(err)) {
+					throw new GoCommerceError(`store not found: no store "${store}" on this engine`, 404, 'store_not_found')
+				}
+			})
+		}
 		const live = await this.live().catch(() => ({}))
 		// `id` must be truthy and stable: the storefront keys a cookie on it.
 		return { ...base, ...live, id: base.id || 'gocommerce' }

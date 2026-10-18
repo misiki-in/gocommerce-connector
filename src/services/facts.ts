@@ -9,7 +9,7 @@ import { BaseService } from './base.service'
  */
 export class StoreFacts extends BaseService {
 	private key(name: string) {
-		return `${this.engineBase()}|${this.creds.store ?? ''}|${name}`
+		return `${this.engineBase()}|${this.store ?? ''}|${name}`
 	}
 
 	/** Enabled plugins by key. A module that is not installed has no key here. */

@@ -32,6 +32,16 @@ export interface Credentials {
 	 */
 	store?: string
 	/**
+	 * `PUBLIC_GOCOMMERCE_BASE_DOMAIN` — under `gocommerce platform`, the domain
+	 * every store gets a subdomain of, `shopnx.in`. One storefront deployment
+	 * then serves them all: a request for `acme.shopnx.in` is sent with
+	 * `X-Store: acme`, the same rule the engine applies to its own host. A host
+	 * outside the base domain falls back to `store`. Server-side the connector
+	 * learns the request's host through `setRequestHost`; in the browser it is
+	 * `window.location.hostname`.
+	 */
+	baseDomain?: string
+	/**
 	 * `PUBLIC_GOCOMMERCE_CHANNEL` — the sales channel new carts and the product
 	 * listing belong to, when the store sells through more than one.
 	 */
