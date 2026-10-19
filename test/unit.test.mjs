@@ -611,3 +611,30 @@ test('a store the engine knows still renders, keyed apart from its neighbours', 
 		m.BaseService.setCredentials({ baseDomain: undefined })
 	}
 })
+
+test('each store under the base domain renders its own name, not the static record’s', async () => {
+	m.clearStoreCache()
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', baseDomain: 'shopnx.in' })
+	m.setStaticStore(() => ({ id: 'from_config', name: 'Test', businessEmail: null }))
+	const names = { chillish: 'Chillish', bee: '' }
+	const svc = new m.StoreService(async (url, init) => {
+		const store = init.headers['X-Store']
+		if (String(url).endsWith('/health/ready')) return Response.json({ data: { currency: 'INR', language: 'en', version: 'x' } })
+		if (new URL(String(url)).pathname === '/api/store')
+			return Response.json({ data: { name: names[store], email: names[store] ? 'hi@chillish.example' : '', phone: '' } })
+		return Response.json({ data: [] })
+	})
+	try {
+		m.setRequestHost(() => 'chillish.shopnx.in')
+		const chillish = await svc.getStoreByIdOrDomain()
+		assert.equal(chillish.name, 'Chillish')
+		assert.equal(chillish.businessEmail, 'hi@chillish.example')
+		m.setRequestHost(() => 'bee.shopnx.in')
+		const bee = await svc.getStoreByIdOrDomain()
+		assert.equal(bee.name, 'Test', 'a store with no name of its own keeps the static one')
+		assert.equal(bee.businessEmail, null)
+	} finally {
+		m.setRequestHost(() => undefined)
+		m.BaseService.setCredentials({ baseDomain: undefined })
+	}
+})
