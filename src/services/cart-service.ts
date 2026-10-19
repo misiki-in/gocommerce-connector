@@ -326,25 +326,47 @@ export class CartService extends BaseService {
 	async updateShippingRate({ cartId, shippingRateId }: { cartId?: string; shippingRateId: string }) {
 		const id = clean(cartId) ?? storedCartId()
 		if (!id) return emptyCart(await this.currency())
-		const ship = cartExtras(id).shippingAddress
-		const country = String(ship?.countryCode || ship?.country || '').toUpperCase()
-		if (!country) throw new GoCommerceError('Add a delivery address first.', 400)
-		const quote = await this.data<{
-			rates: { rate_id: number; name: string; price: { amount_minor: number; currency: string } }[] | null
-			currency: string
-		}>('/api/checkout/rates', { query: { cart: id, country, state: ship?.state ? String(ship.state) : undefined } })
-		const rate = (quote.rates ?? []).find((r) => String(r.rate_id) === String(shippingRateId))
+		if (!this.addressCountry(id)) throw new GoCommerceError('Add a delivery address first.', 400)
+		const rate = (await this.rates(id)).find((r) => String(r.rate_id) === String(shippingRateId))
 		if (!rate) throw new GoCommerceError('That delivery option is not available for this address any more.', 409)
-		saveCartExtras(id, {
-			shippingRateId: String(rate.rate_id),
-			shippingRate: {
-				id: String(rate.rate_id),
-				name: rate.name,
-				minor: rate.price.amount_minor,
-				currency: rate.price.currency,
-			},
-		})
+		saveCartExtras(id, { shippingRateId: String(rate.rate_id), shippingRate: keptRate(rate) })
 		return this.getCartByCartId(id)
+	}
+
+	private addressCountry(id: string): string {
+		const ship = cartExtras(id).shippingAddress
+		return String(ship?.countryCode || ship?.country || '').toUpperCase()
+	}
+
+	/** The engine's delivery options for the bag as it is now, to the address kept for it. */
+	private async rates(id: string): Promise<EngineRate[]> {
+		const ship = cartExtras(id).shippingAddress
+		const quote = await this.data<{ rates: EngineRate[] | null }>('/api/checkout/rates', {
+			query: { cart: id, country: this.addressCountry(id), state: ship?.state ? String(ship.state) : undefined },
+		})
+		return quote.rates ?? []
+	}
+
+	/**
+	 * The chosen option priced again. Its price was kept when it was picked, but a rate can
+	 * depend on the bag's value, and the store's currency can change: a bag past the
+	 * free-delivery line showed "FREE delivery" above a stale ₹7 charge. A rate no longer
+	 * offered is dropped, so the shopper picks again; if the engine cannot be asked, the kept
+	 * price stands and checkout's own quote settles it.
+	 */
+	private async repriceRate(cart: Cart): Promise<void> {
+		const kept = cartExtras(cart.id).shippingRate
+		if (!kept || cart.status === 'converted' || !(cart.line_items ?? []).length || !this.addressCountry(cart.id)) return
+		let rates: EngineRate[]
+		try {
+			rates = await this.rates(cart.id)
+		} catch {
+			return
+		}
+		const now = rates.find((r) => String(r.rate_id) === kept.id)
+		if (!now) saveCartExtras(cart.id, { shippingRateId: null, shippingRate: null })
+		else if (now.price.amount_minor !== kept.minor || now.price.currency !== kept.currency)
+			saveCartExtras(cart.id, { shippingRate: keptRate(now) })
 	}
 
 	/** The payment method is chosen at checkout, by which checkout route is called. */
@@ -386,11 +408,12 @@ export class CartService extends BaseService {
 	private async present(cart: Cart) {
 		const ids = [...new Set((cart.line_items ?? []).map((l) => l.product_id))]
 		const products = new Map<number, Product | null>()
-		await Promise.all(
-			ids.map(async (pid) => {
+		await Promise.all([
+			this.repriceRate(cart),
+			...ids.map(async (pid) => {
 				products.set(pid, await this.productFor(pid))
 			}),
-		)
+		])
 		return toCart(cart, cartExtras(cart.id), (l: CartLine) => {
 			const p = products.get(l.product_id)
 			if (!p) return {}
@@ -405,6 +428,15 @@ export class CartService extends BaseService {
 		)
 	}
 }
+
+type EngineRate = { rate_id: number; name: string; price: { amount_minor: number; currency: string } }
+
+const keptRate = (r: EngineRate) => ({
+	id: String(r.rate_id),
+	name: r.name,
+	minor: r.price.amount_minor,
+	currency: r.price.currency,
+})
 
 const clean = (id?: string | null): string | null => (id && id !== 'undefined' && id !== 'null' ? id : null)
 
