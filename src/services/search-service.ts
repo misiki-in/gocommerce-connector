@@ -27,12 +27,15 @@ function listParam(p: URLSearchParams, key: string): string[] | undefined {
 	return out.length ? out : undefined
 }
 
-/** `?attributes.color=Red,Blue` — the storefront's facet params — as `{ color: ['Red', 'Blue'] }`. */
-function attributesFrom(p: URLSearchParams): Record<string, string[]> | undefined {
+/**
+ * `?attributes.color=Red,Blue` — the storefront's facet params — as `{ color: ['Red', 'Blue'] }`;
+ * `options.Size=M` the same way under the `options.` prefix.
+ */
+function prefixedFrom(p: URLSearchParams, prefix: string): Record<string, string[]> | undefined {
 	const out: Record<string, string[]> = {}
 	for (const key of new Set(p.keys())) {
-		if (!key.startsWith('attributes.')) continue
-		const handle = key.slice('attributes.'.length)
+		if (!key.startsWith(prefix)) continue
+		const handle = key.slice(prefix.length)
 		const values = listParam(p, key)
 		if (handle && values) out[handle] = values
 	}
@@ -67,8 +70,8 @@ function categoryFacets(counted: NonNullable<ProductFacets['categories']>, tree:
 /**
  * The engine's counts in the shape the storefront's filter rail reads. Each
  * `allFilters` key is also the URL parameter the rail writes when a value is
- * ticked, and `searchWithUrl` reads it back: `vendor`, `product_type` and
- * `attributes.<handle>`. Tags go to the rail's own tag group, written as `tags`.
+ * ticked, and `searchWithUrl` reads it back: `vendor`, `product_type`,
+ * `attributes.<handle>` and `options.<name>` (Size, Colour). Tags go to the rail's own tag group, written as `tags`.
  */
 export function toStorefrontFacets(f?: ProductFacets | null, tree: Category[] = []) {
 	if (!f) return { priceStat: {}, categories: [], tags: [], allFilters: {} }
@@ -79,6 +82,7 @@ export function toStorefrontFacets(f?: ProductFacets | null, tree: Category[] = 
 	group('vendor', f.vendors)
 	group('product_type', f.product_types)
 	for (const [handle, values] of Object.entries(f.attributes ?? {})) group(`attributes.${handle}`, values)
+	for (const [name, values] of Object.entries(f.options ?? {})) group(`options.${name}`, values)
 	return {
 		priceStat: f.price ? { min: toMajor(f.price.min), max: toMajor(f.price.max) } : {},
 		categories: categoryFacets(f.categories ?? [], tree),
@@ -120,7 +124,8 @@ export class SearchService extends CatalogService {
 				category: slug || p.get('categories')?.split(',')[0] || undefined,
 				priceFrom: num(p.get('priceFrom')) ?? num(from ?? null),
 				priceTo: num(p.get('priceTo')) ?? num(to ?? null),
-				attributes: attributesFrom(p),
+				attributes: prefixedFrom(p, 'attributes.'),
+				options: prefixedFrom(p, 'options.'),
 				tags: listParam(p, 'tags'),
 				vendors: listParam(p, 'vendor'),
 				productTypes: listParam(p, 'product_type'),

@@ -1793,6 +1793,21 @@ test('every filter the storefront writes reaches the engine, and its counts come
 	assert.deepEqual(res.categoryHierarchy, [{ name: 'Rings', slug: 'rings' }])
 })
 
+test('a ticked size or colour reaches the engine as option=Name:value, and their counts come back as filter groups', async () => {
+	const { svc, asked } = listingEngine('http://options.test', {
+		price: null,
+		tags: [],
+		vendors: [],
+		product_types: [],
+		categories: [],
+		attributes: {},
+		options: { Size: [{ value: 'S', count: 4 }, { value: 'M', count: 6 }], Colour: [{ value: 'Royal blue', count: 2 }] },
+	})
+	const res = await svc.searchWithUrl(new URL('http://storefront.test/products?options.Size=M%2CL&options.Colour=Royal%20blue'))
+	assert.deepEqual(asked[0].searchParams.getAll('option'), ['Size:M', 'Size:L', 'Colour:Royal blue'])
+	assert.deepEqual(res.facets.allFilters, { 'options.Size': { S: 4, M: 6 }, 'options.Colour': { 'Royal blue': 2 } })
+})
+
 test('an engine that does not count facets is asked the old way, once, and the rail stays empty', async () => {
 	const { svc, asked } = listingEngine('http://old-engine.test', null)
 	const first = await svc.searchWithUrl(new URL('http://storefront.test/rings'), 'rings')

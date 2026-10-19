@@ -27,6 +27,8 @@ export type ProductFacets = {
 	product_types: FacetValue[] | null
 	categories: { id: number; slug: string; title: string; count: number }[] | null
 	attributes: Record<string, FacetValue[]> | null
+	/** Per option name (Size, Colour), in the products' own order; engines from D264. */
+	options?: Record<string, FacetValue[]> | null
 }
 
 export type Envelope<T> = { data: T; meta?: ListMeta }
