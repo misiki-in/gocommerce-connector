@@ -2,6 +2,7 @@ import type { Product } from '../engine'
 import { GoCommerceError } from '../errors'
 import { toProduct, type StorefrontProduct } from '../map'
 import { BaseService, mediaUrl } from './base.service'
+import { StoreFacts } from './facts'
 import { MenuService, type StorefrontMenu } from './menu-service'
 
 /** A collection list's card, as the engine resolves it. */
@@ -152,6 +153,8 @@ const MEDIA_KEYS = new Set(['image', 'mobile_image', 'poster', 'video_file'])
  * built-in page.
  */
 export class LayoutService extends BaseService {
+	private readonly facts = new StoreFacts(this._fetch)
+
 	async getHomeLayout({ preview }: { preview?: string | null } = {}): Promise<HomeLayout | null> {
 		return this.getPageLayout('home', { preview })
 	}
@@ -172,6 +175,12 @@ export class LayoutService extends BaseService {
 
 	/** Any arranged page by its key; null for none, as the three above. */
 	async getPageLayout(page: LayoutPage, { preview }: { preview?: string | null } = {}): Promise<PageLayout | null> {
+		// A preview key reads a draft, published or not; anything else asks only
+		// for a page the store has published (StoreFacts.layoutPages).
+		if (!preview?.trim()) {
+			const pages = await this.facts.layoutPages()
+			if (pages && !pages.has(page)) return null
+		}
 		let layout: EngineLayout
 		try {
 			layout = await this.data<EngineLayout>(`/x/layouts/${encodeURIComponent(page)}`, {

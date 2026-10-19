@@ -87,6 +87,8 @@ export class MenuService extends BaseService {
 	/** The handle of the menu the published header or footer names, else the part's own name. */
 	private async chosenMenu(part: 'header' | 'footer'): Promise<string> {
 		if (!(await this.facts.pluginOn('layouts'))) return part
+		const pages = await this.facts.layoutPages()
+		if (pages && !pages.has(part)) return part
 		try {
 			const layout = await this.data<{ sections?: { type: string; settings?: { menu?: unknown } | null }[] | null }>(`/x/layouts/${part}`)
 			const menu = layout?.sections?.find((s) => s.type === part)?.settings?.menu

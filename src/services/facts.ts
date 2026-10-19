@@ -12,6 +12,30 @@ export class StoreFacts extends BaseService {
 		return `${this.engineBase()}|${this.store ?? ''}|${this.language ?? ''}|${name}`
 	}
 
+	/**
+	 * The pages GET /x/layouts/{page} answers for this store, from the theme
+	 * answer's `pages` (GoCommerce #367), remembered half a minute as the
+	 * engine caches it. A page not on it is not asked for: a store that
+	 * arranged no product page used to cost every product page a 404 in the
+	 * shopper's console, and the header and footer the same. Null, and every
+	 * page asked for as before, from an engine that sends no list or when the
+	 * theme cannot be read.
+	 */
+	layoutPages(): Promise<Set<string> | null> {
+		return remember(
+			this.key('layout-pages'),
+			async () => {
+				try {
+					const out = await this.data<{ pages?: unknown } | null>('/x/layouts/theme')
+					return Array.isArray(out?.pages) ? new Set(out.pages.map(String)) : null
+				} catch {
+					return null
+				}
+			},
+			30_000,
+		)
+	}
+
 	/** Enabled plugins by key. A module that is not installed has no key here. */
 	plugins(): Promise<Map<string, Plugin>> {
 		return remember(this.key('plugins'), async () => {

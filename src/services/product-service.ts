@@ -105,8 +105,12 @@ export class ProductService extends CatalogService {
 		categoryId,
 		product,
 		limit,
-	}: { page?: number; categoryId?: string; product?: string; limit?: number } = {}) {
-		if (product) return this.relatedTo(String(product), limit)
+		productId,
+	}: { page?: number; categoryId?: string; product?: string; productId?: string; limit?: number } = {}) {
+		// An id the caller knows is one is asked for by id: the slug route
+		// first cost every bag line a 404 (the cart's cross-sells pass ids).
+		if (productId) return this.relatedTo(() => this.data<Product>(`/api/products/${encodeURIComponent(String(productId))}`), limit)
+		if (product) return this.relatedTo(() => this.findProduct(String(product)), limit)
 		if (!categoryId) return this.list({ page, limit })
 		const category = (await this.facts.categories()).find((c) => String(c.id) === String(categoryId))
 		if (!category) return this.list({ page, limit })
@@ -145,9 +149,9 @@ export class ProductService extends CatalogService {
 		}
 	}
 
-	private async relatedTo(slug: string, limit?: number) {
+	private async relatedTo(find: () => Promise<Product>, limit?: number) {
 		const size = Math.min(100, Math.max(1, Number(limit) || PAGE_SIZE))
-		const p = await this.findProduct(slug)
+		const p = await find()
 		const self = String(p.id)
 		// The listing answers either the engine's cards or the search index's,
 		// so all a pick needs to know is the id.
