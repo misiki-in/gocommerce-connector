@@ -29,12 +29,16 @@ function symbolFor(code: string): string {
 /**
  * The store record every page renders from.
  *
- * Name, logo, theme and the rest are the storefront's own (its static store,
+ * Logo, theme and the rest are the storefront's own (its static store,
  * registered through `setStaticStore`); the engine has no opinion on them.
- * Where the engine does have one, it wins: the settlement currency — every
- * price on the site is formatted with it, and a store record saying USD over
- * an engine charging INR would print the wrong symbol on every price — the
- * modules that back a storefront feature, and the menus.
+ * Where the engine does have one, it wins:
+ * - the store's name and contact, as its owner set them in the panel. One
+ *   storefront serves every store under `baseDomain`, so a name in the static
+ *   record would be every store's name;
+ * - the settlement currency. Every price on the site is formatted with it, and
+ *   a store record saying USD over an engine charging INR would print the
+ *   wrong symbol on every price;
+ * - the modules that back a storefront feature, and the menus.
  *
  * This runs on every request and a throw here takes every page down, so the
  * engine's half is best-effort: unreachable, the storefront still renders
@@ -98,17 +102,22 @@ export class StoreService extends BaseService {
 	}
 
 	private async live(): Promise<Record<string, unknown>> {
-		const [ready, plugins, menus, base] = await Promise.all([
+		const [ready, plugins, menus, base, profile] = await Promise.all([
 			this.facts.ready(),
 			this.facts.plugins().catch(() => new Map()),
 			new MenuService(this._fetch).engineMenus(),
 			readStaticStore(),
+			this.facts.profile().catch(() => null),
 		])
 		const code = ready.currency
 		const sameCurrency = (base.currency?.code ?? base.currencyCode) === code
 		const flag = (on: boolean) => ({ ...(on ? { active: true } : { active: false }) })
 		const basePlugins = (base.plugins ?? {}) as Record<string, Record<string, unknown>>
 		return {
+			// Only what the owner filled in: an empty name keeps the static one.
+			...(profile?.name ? { name: profile.name } : {}),
+			...(profile?.email ? { businessEmail: profile.email } : {}),
+			...(profile?.phone ? { businessPhone: profile.phone } : {}),
 			currencyCode: code,
 			currencySymbol: sameCurrency ? (base.currencySymbol ?? symbolFor(code)) : symbolFor(code),
 			currency: {

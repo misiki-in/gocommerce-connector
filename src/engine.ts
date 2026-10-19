@@ -219,6 +219,9 @@ export type ShippingRate = { rate_id: number; name: string; price: Money; zone_i
 
 export type Plugin = { key: string; title: string; settings: Record<string, unknown> }
 
+/** `GET /api/store`: what anyone may read about the shop. */
+export type StoreProfile = { name: string; email: string; phone: string; support_url: string }
+
 export type Vendor = {
 	id: number
 	slug: string
