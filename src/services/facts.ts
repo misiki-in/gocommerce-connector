@@ -28,9 +28,16 @@ export class StoreFacts extends BaseService {
 		}
 	}
 
-	/** The store's settlement currency and default language. */
-	ready(): Promise<{ currency: string; language: string; version: string }> {
-		return remember(this.key('ready'), () => this.data('/health/ready'))
+	/**
+	 * The store's settlement currency and default language, from routes bound
+	 * to the store: `/health/ready` answers for the install, so on a shared
+	 * engine every store read as the install's currency.
+	 */
+	ready(): Promise<{ currency: string; language: string }> {
+		return remember(this.key('ready'), async () => {
+			const [{ currency }, { language }] = await Promise.all([this.checkoutOptions(), this.profile()])
+			return { currency, language }
+		})
 	}
 
 	/** The store's own name and how a buyer reaches it, as set in its panel. */
