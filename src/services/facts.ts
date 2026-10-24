@@ -45,6 +45,14 @@ export class StoreFacts extends BaseService {
 		return remember(this.key('profile'), () => this.data<StoreProfile>('/api/store'))
 	}
 
+	/** Where the store delivers (D117): its priced zones' countries, or everywhere. */
+	shipsTo(): Promise<{ everywhere: boolean; countries: string[] }> {
+		return remember(this.key('ships-to'), async () => {
+			const r = await this.data<{ everywhere: boolean; countries: string[] } | null>('/api/checkout/countries')
+			return { everywhere: r?.everywhere ?? true, countries: r?.countries ?? [] }
+		})
+	}
+
 	checkoutOptions(): Promise<CheckoutOptions> {
 		return remember(this.key('checkout'), () => this.data<CheckoutOptions>('/api/checkout'))
 	}

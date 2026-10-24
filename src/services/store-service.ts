@@ -102,12 +102,14 @@ export class StoreService extends BaseService {
 	}
 
 	private async live(): Promise<Record<string, unknown>> {
-		const [ready, plugins, menus, base, profile] = await Promise.all([
+		const [ready, plugins, menus, base, profile, ships] = await Promise.all([
 			this.facts.ready(),
 			this.facts.plugins().catch(() => new Map()),
 			new MenuService(this._fetch).engineMenus(),
 			readStaticStore(),
 			this.facts.profile().catch(() => null),
+			// An engine without the route rules nothing out.
+			this.facts.shipsTo().catch(() => ({ everywhere: true, countries: [] as string[] })),
 		])
 		const code = ready.currency
 		const sameCurrency = (base.currency?.code ?? base.currencyCode) === code
@@ -137,6 +139,7 @@ export class StoreService extends BaseService {
 				},
 			},
 			...(menus?.length ? { menu: menus } : {}),
+			...deliverable(base, ships),
 			// The one way this store signs customers in (D116), which the sign-in
 			// form reads as PHONE or EMAIL. Without the accounts module the static
 			// record says.
@@ -148,3 +151,31 @@ export class StoreService extends BaseService {
 }
 
 export const storeService = new StoreService()
+
+type Country = { code: string; name: string; [k: string]: unknown }
+
+/**
+ * The address form's countries narrowed to where the store delivers (D117).
+ * Each keeps the static record's entry, which may carry more than a name; a
+ * country the record lacks is named by the browser's own list. One country is
+ * also the default, and so is the first when the static default is not one of
+ * them. Everywhere changes nothing.
+ */
+function deliverable(
+	base: { country?: Country; countries?: Country[] },
+	ships: { everywhere: boolean; countries: string[] },
+): { countries?: Country[]; country?: Country } {
+	if (ships.everywhere || !ships.countries.length) return {}
+	const known = new Map((base.countries ?? []).map((c) => [String(c.code).toUpperCase(), c]))
+	const countries = ships.countries.map((code) => known.get(code) ?? { code, name: regionName(code) })
+	const keep = base.country && ships.countries.includes(String(base.country.code).toUpperCase())
+	return { countries, ...(keep ? {} : { country: countries[0] }) }
+}
+
+function regionName(code: string): string {
+	try {
+		return new Intl.DisplayNames(['en'], { type: 'region' }).of(code) ?? code
+	} catch {
+		return code
+	}
+}
