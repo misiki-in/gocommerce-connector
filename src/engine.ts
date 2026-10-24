@@ -238,6 +238,8 @@ export type Customer = {
 	id: number
 	email: string
 	email_verified: boolean
+	/** The phone was proved with a code and signs in to this account (D118). */
+	phone_verified?: boolean
 	name: string
 	phone: string
 	created_at: string

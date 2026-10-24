@@ -181,10 +181,10 @@ export class AuthService extends UserService {
 	 * How this store signs customers in: `email_password` or `phone_otp`.
 	 * A store whose accounts module says nothing signs in by email.
 	 */
-	async loginMethod(): Promise<'email_password' | 'phone_otp'> {
+	async loginMethod(): Promise<'email_password' | 'phone_otp' | 'email_or_phone'> {
 		try {
 			const method = (await this.facts.plugins()).get('identity')?.settings?.login_method
-			return method === 'phone_otp' ? 'phone_otp' : 'email_password'
+			return method === 'phone_otp' || method === 'email_or_phone' ? method : 'email_password'
 		} catch {
 			return 'email_password'
 		}
@@ -250,6 +250,27 @@ export class ProfileService extends UserService {
 
 	async save(profile: { firstName?: string; lastName?: string; email?: string; phone?: string }) {
 		return this.updateProfile(profile)
+	}
+
+	/** Texts a code to a phone the signed-in shopper wants to add (D118). */
+	async requestPhoneLink({ phone }: { phone: string }) {
+		const res = await this.account<{ expires_in_minutes: number }>('/x/identity/me/phone', {
+			method: 'POST',
+			auth: true,
+			body: { phone: String(phone ?? '').trim() },
+		})
+		return { expiresInMinutes: res?.expires_in_minutes ?? 10 }
+	}
+
+	/** Adds the phone with its code; from then on it signs in to this account too. */
+	async verifyPhoneLink({ phone, otp }: { phone: string; otp: string }) {
+		const c = await this.account<Customer>('/x/identity/me/phone/verify', {
+			method: 'POST',
+			auth: true,
+			body: { phone: String(phone ?? '').trim(), code: String(otp ?? '').trim() },
+		})
+		updateMe(c)
+		return toUser(c)
 	}
 }
 
