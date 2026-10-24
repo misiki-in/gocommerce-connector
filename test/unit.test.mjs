@@ -697,3 +697,50 @@ test("a store's own domain names it, after the subdomain and the static store", 
 		m.BaseService.setCredentials({ baseDomain: undefined, store: undefined })
 	}
 })
+
+test('a guest opens an order with a code, and the browser keeps it', async () => {
+	const store = {}
+	globalThis.window = {
+		location: { origin: 'http://storefront.test', hostname: 'storefront.test' },
+		localStorage: {
+			getItem: (k) => store[k] ?? null,
+			setItem: (k, v) => {
+				store[k] = v
+			},
+			removeItem: (k) => {
+				delete store[k]
+			},
+		},
+	}
+	globalThis.document = { cookie: '' }
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const seen = []
+	const order = {
+		id: 7, number: 'GC-000049', status: 'confirmed', payment_status: 'pending', payment_provider: 'cod', currency: 'INR',
+		subtotal: { amount_minor: 1000, currency: 'INR' }, total: { amount_minor: 1000, currency: 'INR' },
+		email: 'a@example.com', lines: [], fulfillments: [], address: {}, created_at: '', updated_at: '',
+	}
+	try {
+		const svc = new m.OrderService(async (url, init) => {
+			seen.push(`${init.method ?? 'GET'} ${url} ${init.body ?? ''}`)
+			if (url.endsWith('/code')) return Response.json({ data: { expires_in_minutes: 10 } }, { status: 202 })
+			if (url.endsWith('/code/verify')) return Response.json({ data: { order, access_token: 'tok_49' } })
+			return Response.json({ data: order })
+		})
+		const sent = await svc.requestOrderCode({ orderNo: ' GC-000049 ', contact: 'a@example.com' })
+		assert.equal(sent.expiresInMinutes, 10)
+		const res = await svc.getOrderByEmailAndOTP({ orderNo: 'GC-000049', otp: '0420' })
+		assert.equal(res.data[0].orderNo, 'GC-000049')
+		// Kept like an order placed here, so the order page reads it again.
+		await svc.getOrder('GC-000049')
+		assert.deepEqual(seen, [
+			'POST http://engine.test/api/orders/GC-000049/code {"contact":"a@example.com"}',
+			'POST http://engine.test/api/orders/GC-000049/code/verify {"code":"0420"}',
+			'GET http://engine.test/api/orders/GC-000049?token=tok_49 ',
+		])
+	} finally {
+		delete globalThis.window
+		delete globalThis.document
+		m.BaseService.setCredentials({ apiUrl: undefined })
+	}
+})

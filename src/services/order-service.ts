@@ -2,7 +2,7 @@ import type { Order, Product } from '../engine'
 import { GoCommerceError, NotSupportedError } from '../errors'
 import { toOrder } from '../map'
 import { toMajor } from '../money'
-import { inBrowser, placedOrder, placedOrderForCart, sessionToken } from '../browser'
+import { inBrowser, placedOrder, placedOrderForCart, rememberOrder, sessionToken } from '../browser'
 import { BaseService, emptyPage, mediaUrl, toPage } from './base.service'
 
 /**
@@ -103,12 +103,32 @@ export class OrderService extends BaseService {
 		return emptyPage()
 	}
 
-	async getOrderByEmailAndOTP(): Promise<never> {
-		throw new NotSupportedError(
-			'OrderService',
-			'getOrderByEmailAndOTP',
-			'the engine sends no one-time codes; a guest reads an order with its access token',
+	/**
+	 * Sends a 4-digit code to the email or phone on the order, when `contact`
+	 * is that email or phone. The engine answers the same either way, so this
+	 * resolves whether or not anything was sent.
+	 */
+	async requestOrderCode({ orderNo, contact }: { orderNo: string; contact: string }) {
+		const res = await this.data<{ expires_in_minutes: number }>(
+			`/api/orders/${encodeURIComponent(orderNo.trim())}/code`,
+			{ method: 'POST', body: { contact: contact.trim() } },
 		)
+		return { expiresInMinutes: res?.expires_in_minutes ?? 10 }
+	}
+
+	/**
+	 * Opens an order with the code `requestOrderCode` sent. The token it answers
+	 * is kept like an order placed in this browser, so the order page and
+	 * `getOrder` read it again without another code.
+	 */
+	async getOrderByEmailAndOTP({ orderNo, otp }: { orderNo: string; otp: string; email?: string }) {
+		const number = orderNo.trim()
+		const res = await this.data<{ order: Order; access_token: string }>(
+			`/api/orders/${encodeURIComponent(number)}/code/verify`,
+			{ method: 'POST', body: { code: String(otp).trim() } },
+		)
+		rememberOrder({ number: res.order.number, token: res.access_token, cartId: '' })
+		return { data: [toOrder(res.order)] }
 	}
 }
 
