@@ -137,6 +137,12 @@ export class StoreService extends BaseService {
 				},
 			},
 			...(menus?.length ? { menu: menus } : {}),
+			// The one way this store signs customers in (D116), which the sign-in
+			// form reads as PHONE or EMAIL. Without the accounts module the static
+			// record says.
+			...(plugins.has('identity')
+				? { loginType: plugins.get('identity')?.settings?.login_method === 'phone_otp' ? 'PHONE' : 'EMAIL' }
+				: {}),
 		}
 	}
 }
