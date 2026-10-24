@@ -804,3 +804,21 @@ test('a store that says nothing signs in by email and password', async () => {
 		m.BaseService.setCredentials({ apiUrl: undefined })
 	}
 })
+
+test('the sign-in form follows the way the store chose', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	m.setStaticStore(() => ({ id: 'from_config', name: 'Shop', loginType: 'BOTH' }))
+	let method
+	const svc = new m.StoreService(async (url) => {
+		if (String(url).endsWith('/api/checkout')) return Response.json({ data: { currency: 'INR', methods: [] } })
+		if (new URL(String(url)).pathname === '/api/plugins')
+			return Response.json({ data: method ? [{ key: 'identity', title: 'Customer sign-in', settings: { login_method: method } }] : [] })
+		return Response.json({ data: [] })
+	})
+	for (const [chosen, want] of [['phone_otp', 'PHONE'], ['email_password', 'EMAIL'], [undefined, 'BOTH']]) {
+		m.clearStoreCache()
+		method = chosen
+		const store = await svc.getStoreByIdOrDomain()
+		assert.equal(store.loginType, want, `login_method ${chosen}`)
+	}
+})
