@@ -822,3 +822,44 @@ test('the sign-in form follows the way the store chose', async () => {
 		assert.equal(store.loginType, want, `login_method ${chosen}`)
 	}
 })
+
+test('the address form offers only the countries the store delivers to', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	m.setStaticStore(() => ({
+		id: 'from_config',
+		name: 'Shop',
+		country: { code: 'US', name: 'United States' },
+		countries: [
+			{ code: 'IN', name: 'India' },
+			{ code: 'US', name: 'United States' },
+		],
+	}))
+	let ships
+	const svc = new m.StoreService(async (url) => {
+		const path = new URL(String(url)).pathname
+		if (path === '/api/checkout') return Response.json({ data: { currency: 'INR', methods: [] } })
+		if (path === '/api/checkout/countries') return Response.json({ data: ships })
+		return Response.json({ data: [] })
+	})
+
+	m.clearStoreCache()
+	ships = { everywhere: false, countries: ['IN'] }
+	let store = await svc.getStoreByIdOrDomain()
+	assert.deepEqual(store.countries, [{ code: 'IN', name: 'India' }])
+	assert.equal(store.country.code, 'IN', 'the one country is the default')
+
+	m.clearStoreCache()
+	ships = { everywhere: false, countries: ['IN', 'NP'] }
+	store = await svc.getStoreByIdOrDomain()
+	assert.deepEqual(
+		store.countries.map((c) => c.code),
+		['IN', 'NP'],
+	)
+	assert.ok(store.countries[1].name, 'a country the static list lacks still has a name')
+	assert.equal(store.country.code, 'IN', 'a default the store does not deliver to gives way to the first it does')
+
+	m.clearStoreCache()
+	ships = { everywhere: true, countries: [] }
+	store = await svc.getStoreByIdOrDomain()
+	assert.equal(store.countries.length, 2, 'everywhere keeps the static list')
+})
