@@ -822,3 +822,58 @@ test('the sign-in form follows the way the store chose', async () => {
 		assert.equal(store.loginType, want, `login_method ${chosen}`)
 	}
 })
+
+test('a signed-in shopper adds a phone with a code, and the account says it is verified', async () => {
+	const store = { gocommerce_token: 'sess_1' }
+	globalThis.window = {
+		location: { origin: 'http://storefront.test', hostname: 'storefront.test' },
+		localStorage: {
+			getItem: (k) => store[k] ?? null,
+			setItem: (k, v) => {
+				store[k] = v
+			},
+			removeItem: (k) => {
+				delete store[k]
+			},
+		},
+	}
+	globalThis.document = { cookie: '' }
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const seen = []
+	const record = { id: 9, email: 'ada@example.com', email_verified: false, name: 'Ada', phone: '+919876543210', phone_verified: true, created_at: '', updated_at: '' }
+	try {
+		const svc = new m.ProfileService(async (url, init) => {
+			seen.push(`${init.method ?? 'GET'} ${new URL(String(url)).pathname} ${init.body ?? ''}`)
+			if (String(url).endsWith('/me/phone')) return Response.json({ data: { expires_in_minutes: 10 } }, { status: 202 })
+			return Response.json({ data: record })
+		})
+		const sent = await svc.requestPhoneLink({ phone: '+91 98765 43210' })
+		assert.equal(sent.expiresInMinutes, 10)
+		const me = await svc.verifyPhoneLink({ phone: '+91 98765 43210', otp: '0420' })
+		assert.equal(me.phoneVerified, true)
+		assert.deepEqual(seen, [
+			'POST /x/identity/me/phone {"phone":"+91 98765 43210"}',
+			'POST /x/identity/me/phone/verify {"phone":"+91 98765 43210","code":"0420"}',
+		])
+	} finally {
+		delete globalThis.window
+		delete globalThis.document
+		m.BaseService.setCredentials({ apiUrl: undefined })
+	}
+})
+
+test('a store allowing email or phone offers both on the sign-in form', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	m.setStaticStore(() => ({ id: 'from_config', name: 'Shop', loginType: 'EMAIL' }))
+	m.clearStoreCache()
+	const svc = new m.StoreService(async (url) => {
+		const path = new URL(String(url)).pathname
+		if (path === '/api/checkout') return Response.json({ data: { currency: 'INR', methods: [] } })
+		if (path === '/api/plugins')
+			return Response.json({ data: [{ key: 'identity', title: 'Customer sign-in', settings: { login_method: 'email_or_phone' } }] })
+		return Response.json({ data: [] })
+	})
+	const store = await svc.getStoreByIdOrDomain()
+	assert.equal(store.loginType, 'BOTH')
+	assert.equal(await new m.AuthService(async (url) => Response.json({ data: [{ key: 'identity', title: '', settings: { login_method: 'email_or_phone' } }] })).loginMethod(), 'email_or_phone')
+})

@@ -109,6 +109,7 @@ export function toMe(c: Customer) {
 		avatar: null,
 		role: 'USER',
 		emailVerified: c.email_verified,
+		phoneVerified: !!c.phone_verified,
 		storeId: null,
 	}
 }

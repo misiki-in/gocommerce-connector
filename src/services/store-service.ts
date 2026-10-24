@@ -141,10 +141,13 @@ export class StoreService extends BaseService {
 			// form reads as PHONE or EMAIL. Without the accounts module the static
 			// record says.
 			...(plugins.has('identity')
-				? { loginType: plugins.get('identity')?.settings?.login_method === 'phone_otp' ? 'PHONE' : 'EMAIL' }
+				? { loginType: LOGIN_TYPES[String(plugins.get('identity')?.settings?.login_method)] ?? 'EMAIL' }
 				: {}),
 		}
 	}
 }
 
 export const storeService = new StoreService()
+
+/** The sign-in form's names for the store's choice (D116, D118). */
+const LOGIN_TYPES: Record<string, string> = { phone_otp: 'PHONE', email_or_phone: 'BOTH', email_password: 'EMAIL' }

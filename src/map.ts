@@ -643,6 +643,7 @@ export function toUser(c: Customer) {
 		email: c.email,
 		emailVerified: c.email_verified,
 		phone: c.phone || null,
+		phoneVerified: !!c.phone_verified,
 		firstName: firstName || '',
 		lastName: rest.join(' '),
 		name: c.name,
