@@ -667,3 +667,33 @@ test('each store is priced in its own currency, not the install’s', async () =
 		m.BaseService.setCredentials({ baseDomain: undefined })
 	}
 })
+
+test("a store's own domain names it, after the subdomain and the static store", async () => {
+	m.clearStoreCache()
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', baseDomain: 'shopnx.in' })
+	let host
+	m.setRequestHost(() => host)
+	const seen = []
+	const svc = new m.PageService(async (url, init) => {
+		seen.push(init.headers['X-Store'])
+		return Response.json({
+			data: { id: 1, slug: 'a', title: 'A', body: '', status: 'published', language: 'en', created_at: '', updated_at: '' },
+		})
+	})
+	try {
+		for (host of ['Chillish.in.', 'www.chillish.in:443', 'acme.shopnx.in', 'shopnx.in', 'localhost', '127.0.0.1', '[::1]']) {
+			await svc.getOne('a')
+		}
+		assert.deepEqual(seen, ['chillish.in', 'www.chillish.in', 'acme', undefined, undefined, undefined, undefined])
+
+		// A storefront pinned to one store keeps it on any address.
+		m.BaseService.setCredentials({ store: 'pinned' })
+		seen.length = 0
+		host = 'chillish.in'
+		await svc.getOne('a')
+		assert.deepEqual(seen, ['pinned'])
+	} finally {
+		m.setRequestHost(() => undefined)
+		m.BaseService.setCredentials({ baseDomain: undefined, store: undefined })
+	}
+})
