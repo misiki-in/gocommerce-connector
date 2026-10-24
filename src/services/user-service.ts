@@ -2,6 +2,7 @@ import type { AuthResponse, Customer, Order } from '../engine'
 import { GoCommerceError, NotSupportedError } from '../errors'
 import { toOrder, toUser } from '../map'
 import { endSession, placedOrder, startSession, storedCartId, updateMe } from '../browser'
+import { StoreFacts } from './facts'
 import { BaseService } from './base.service'
 
 /**
@@ -147,7 +148,7 @@ export class UserService extends BaseService {
 		throw new NotSupportedError('UserService', 'joinAsVendor', 'sellers are invited by the store')
 	}
 
-	private async signedIn(auth: AuthResponse) {
+	protected async signedIn(auth: AuthResponse) {
 		const me = startSession(auth)
 		const cartId = storedCartId()
 		if (cartId) await this.claimCartForAccount(cartId)
@@ -169,10 +170,26 @@ export class UserService extends BaseService {
 }
 
 /**
- * Password resets and email confirmation. Phone sign-in by one-time code is a
- * Litekart flow; the engine has no such thing and says so.
+ * Password resets, email confirmation, and phone sign-in. A store signs its
+ * customers in one way (D116), read from `loginMethod`; the engine refuses
+ * the other.
  */
 export class AuthService extends UserService {
+	private readonly facts = new StoreFacts(this._fetch)
+
+	/**
+	 * How this store signs customers in: `email_password` or `phone_otp`.
+	 * A store whose accounts module says nothing signs in by email.
+	 */
+	async loginMethod(): Promise<'email_password' | 'phone_otp'> {
+		try {
+			const method = (await this.facts.plugins()).get('identity')?.settings?.login_method
+			return method === 'phone_otp' ? 'phone_otp' : 'email_password'
+		} catch {
+			return 'email_password'
+		}
+	}
+
 	async forgotPassword({ email }: { email: string; referrer?: string }) {
 		return this.account<{ accepted: boolean }>('/x/identity/password-reset', {
 			method: 'POST',
@@ -202,12 +219,22 @@ export class AuthService extends UserService {
 		}
 	}
 
-	async getOtp(): Promise<never> {
-		throw new NotSupportedError('AuthService', 'getOtp', 'sign in with an email and password')
+	/** Texts a 4-digit sign-in code to `phone`, which needs its country code. */
+	async getOtp({ phone }: { phone: string }) {
+		const res = await this.account<{ expires_in_minutes: number }>('/x/identity/otp', {
+			method: 'POST',
+			body: { phone: String(phone ?? '').trim() },
+		})
+		return { expiresInMinutes: res?.expires_in_minutes ?? 10 }
 	}
 
-	async verifyOtp(): Promise<never> {
-		throw new NotSupportedError('AuthService', 'verifyOtp', 'sign in with an email and password')
+	/** Signs in the account on `phone` with the code it was sent, opening one the first time. */
+	async verifyOtp({ phone, otp }: { phone: string; otp: string }) {
+		const auth = await this.account<AuthResponse>('/x/identity/otp/verify', {
+			method: 'POST',
+			body: { phone: String(phone ?? '').trim(), code: String(otp ?? '').trim() },
+		})
+		return this.signedIn(auth)
 	}
 
 	async joinAsAdmin(): Promise<never> {
