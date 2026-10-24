@@ -744,3 +744,63 @@ test('a guest opens an order with a code, and the browser keeps it', async () =>
 		m.BaseService.setCredentials({ apiUrl: undefined })
 	}
 })
+
+test('a shopper signs in with a code texted to their phone', async () => {
+	const store = {}
+	globalThis.window = {
+		location: { origin: 'http://storefront.test', hostname: 'storefront.test' },
+		localStorage: {
+			getItem: (k) => store[k] ?? null,
+			setItem: (k, v) => {
+				store[k] = v
+			},
+			removeItem: (k) => {
+				delete store[k]
+			},
+		},
+	}
+	globalThis.document = { cookie: '' }
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	m.clearStoreCache()
+	const seen = []
+	try {
+		const svc = new m.AuthService(async (url, init) => {
+			seen.push(`${init.method ?? 'GET'} ${url} ${init.body ?? ''}`)
+			if (url.endsWith('/api/plugins')) {
+				return Response.json({ data: [{ key: 'identity', title: 'Customer sign-in', settings: { login_method: 'phone_otp' } }] })
+			}
+			if (url.endsWith('/x/identity/otp')) return Response.json({ data: { expires_in_minutes: 10 } }, { status: 202 })
+			return Response.json({
+				data: {
+					token: 'sess_1',
+					expires_at: new Date(Date.now() + 86400000).toISOString(),
+					record: { id: 9, email: '', email_verified: false, name: '', phone: '+919876543210', created_at: '', updated_at: '' },
+				},
+			})
+		})
+		assert.equal(await svc.loginMethod(), 'phone_otp')
+		await svc.getOtp({ phone: '+91 98765 43210' })
+		const me = await svc.verifyOtp({ phone: '+91 98765 43210', otp: '0420' })
+		assert.equal(me.phone, '+919876543210')
+		assert.ok(Object.values(store).includes('sess_1'), 'the session is kept in the browser')
+		assert.deepEqual(seen.slice(1, 3), [
+			'POST http://engine.test/x/identity/otp {"phone":"+91 98765 43210"}',
+			'POST http://engine.test/x/identity/otp/verify {"phone":"+91 98765 43210","code":"0420"}',
+		])
+	} finally {
+		delete globalThis.window
+		delete globalThis.document
+		m.BaseService.setCredentials({ apiUrl: undefined })
+	}
+})
+
+test('a store that says nothing signs in by email and password', async () => {
+	m.clearStoreCache()
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	try {
+		const svc = new m.AuthService(async () => Response.json({ data: [] }))
+		assert.equal(await svc.loginMethod(), 'email_password')
+	} finally {
+		m.BaseService.setCredentials({ apiUrl: undefined })
+	}
+})
