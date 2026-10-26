@@ -784,7 +784,7 @@ test('a shopper signs in with a code texted to their phone', async () => {
 		assert.equal(me.phone, '+919876543210')
 		assert.ok(Object.values(store).includes('sess_1'), 'the session is kept in the browser')
 		assert.deepEqual(seen.slice(1, 3), [
-			'POST http://engine.test/x/identity/otp {"phone":"+91 98765 43210"}',
+			'POST http://engine.test/x/identity/otp {"phone":"+91 98765 43210","domain":"storefront.test"}',
 			'POST http://engine.test/x/identity/otp/verify {"phone":"+91 98765 43210","code":"0420"}',
 		])
 	} finally {
@@ -942,4 +942,16 @@ test('a new phone asks "already have an account?" before one opens (D123)', asyn
 
 	await svc.login({ email: 'ada@example.com', password: 'pw' })
 	assert.deepEqual(calls[3].body, { email: 'ada@example.com', password: 'pw' })
+})
+
+test('a sign-in code names the site it is asked from, for Chrome to fill it in (D124)', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const bodies = []
+	const svc = new m.AuthService(async (_url, init) => {
+		bodies.push(JSON.parse(init.body))
+		return new Response(JSON.stringify({ data: { expires_in_minutes: 10 } }), { status: 202, headers: { 'Content-Type': 'application/json' } })
+	})
+	await svc.getOtp({ phone: '+919876543210', domain: 'chillish.in' })
+	await svc.getOtp({ phone: '+919876543210' })
+	assert.deepEqual(bodies, [{ phone: '+919876543210', domain: 'chillish.in' }, { phone: '+919876543210' }])
 })
