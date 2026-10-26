@@ -918,3 +918,28 @@ test('a store allowing email or phone offers both on the sign-in form', async ()
 	assert.equal(store.loginType, 'BOTH')
 	assert.equal(await new m.AuthService(async (url) => Response.json({ data: [{ key: 'identity', title: '', settings: { login_method: 'email_or_phone' } }] })).loginMethod(), 'email_or_phone')
 })
+
+test('a new phone asks "already have an account?" before one opens (D123)', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const calls = []
+	const auth = { token: 't', expires_at: '2030-01-01T00:00:00Z', record: { id: 9, email: 'ada@example.com', phone: '+919876543210' } }
+	const svc = new m.AuthService(async (url, init) => {
+		const path = new URL(String(url)).pathname
+		calls.push({ path, body: JSON.parse(init.body ?? '{}') })
+		if (path === '/x/identity/otp/verify') return Response.json({ data: { new_phone: true, phone_token: 'proof' } })
+		return Response.json({ data: auth })
+	})
+
+	const asked = await svc.verifyOtp({ phone: '+919876543210', otp: '0420', askIfNew: true })
+	assert.deepEqual(asked, { newPhone: true, phoneToken: 'proof' })
+	assert.equal(calls[0].body.ask_if_new, true)
+
+	await svc.login({ email: 'ada@example.com', password: 'pw', phone: '+919876543210', phoneToken: 'proof' })
+	assert.deepEqual(calls[1], { path: '/x/identity/login', body: { email: 'ada@example.com', password: 'pw', phone: '+919876543210', phone_token: 'proof' } })
+
+	await svc.openPhoneAccount({ phone: '+919876543210', phoneToken: 'proof' })
+	assert.deepEqual(calls[2], { path: '/x/identity/otp/new-account', body: { phone: '+919876543210', phone_token: 'proof' } })
+
+	await svc.login({ email: 'ada@example.com', password: 'pw' })
+	assert.deepEqual(calls[3].body, { email: 'ada@example.com', password: 'pw' })
+})

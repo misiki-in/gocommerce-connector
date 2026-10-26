@@ -14,11 +14,30 @@ import { BaseService } from './base.service'
  * as "Accounts are not available on this store" rather than as a route error.
  */
 export class UserService extends BaseService {
-	/** Email and password. The answer is the user object the storefront keeps in its `me` cookie. */
-	async login({ email, password }: { email: string; password: string; cartId?: string | null }) {
+	/**
+	 * Email and password. The answer is the user object the storefront keeps in its `me` cookie.
+	 * With `phone` and `phoneToken` from `verifyOtp({ askIfNew: true })`, the phone is added to
+	 * the account as it signs in (D123).
+	 */
+	async login({
+		email,
+		password,
+		phone,
+		phoneToken,
+	}: {
+		email: string
+		password: string
+		phone?: string
+		phoneToken?: string
+		cartId?: string | null
+	}) {
 		const auth = await this.account<AuthResponse>('/x/identity/login', {
 			method: 'POST',
-			body: { email: String(email ?? '').trim(), password: String(password ?? '') },
+			body: {
+				email: String(email ?? '').trim(),
+				password: String(password ?? ''),
+				...(phoneToken ? { phone: String(phone ?? '').trim(), phone_token: phoneToken } : {}),
+			},
 		})
 		return this.signedIn(auth)
 	}
@@ -228,11 +247,30 @@ export class AuthService extends UserService {
 		return { expiresInMinutes: res?.expires_in_minutes ?? 10 }
 	}
 
-	/** Signs in the account on `phone` with the code it was sent, opening one the first time. */
-	async verifyOtp({ phone, otp }: { phone: string; otp: string }) {
-		const auth = await this.account<AuthResponse>('/x/identity/otp/verify', {
+	/**
+	 * Signs in the account on `phone` with the code it was sent, opening one the first time.
+	 * With `askIfNew`, on a store that signs in either way, a phone with no account opens none:
+	 * the answer is `{ newPhone: true, phoneToken }`, and the storefront asks "Already have an
+	 * account?" — `login` with the token adds the phone to it, `openPhoneAccount` opens a new one (D123).
+	 */
+	async verifyOtp({ phone, otp, askIfNew }: { phone: string; otp: string; askIfNew?: boolean }) {
+		const res = await this.account<AuthResponse | { new_phone: true; phone_token: string }>('/x/identity/otp/verify', {
 			method: 'POST',
-			body: { phone: String(phone ?? '').trim(), code: String(otp ?? '').trim() },
+			body: {
+				phone: String(phone ?? '').trim(),
+				code: String(otp ?? '').trim(),
+				...(askIfNew ? { ask_if_new: true } : {}),
+			},
+		})
+		if ('new_phone' in res && res.new_phone) return { newPhone: true as const, phoneToken: res.phone_token }
+		return this.signedIn(res as AuthResponse)
+	}
+
+	/** Opens a new account on a phone `verifyOtp({ askIfNew: true })` proved, and signs it in (D123). */
+	async openPhoneAccount({ phone, phoneToken }: { phone: string; phoneToken: string }) {
+		const auth = await this.account<AuthResponse>('/x/identity/otp/new-account', {
+			method: 'POST',
+			body: { phone: String(phone ?? '').trim(), phone_token: phoneToken },
 		})
 		return this.signedIn(auth)
 	}
