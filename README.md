@@ -129,6 +129,7 @@ down stays best-effort: the storefront renders from its static record.
 | reviews | `/x/reviews` |
 | content pages (`/p/…`, legal pages) | `/x/cms/pages` |
 | FAQ | `/x/faq` |
+| composed home page | `/x/layouts/home` (`?preview=` for a draft) — `layoutService.getHomeLayout()`, null when the store has none |
 | menus | `/x/navigation/menus/{header,footer}`, laid over `store.menu`; any menu by handle |
 | product specs table | the product's category attribute answers |
 | attribute filters (`?attributes.color=Red`) | `/api/products?attr=color:Red` |
