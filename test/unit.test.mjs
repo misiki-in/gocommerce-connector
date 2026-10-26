@@ -296,6 +296,8 @@ test('every service the storefront imports by name is exported', () => {
 		'storeService',
 		'menuService',
 		'pageService',
+		'layoutService',
+		'LayoutService',
 		'faqService',
 		'FaqService',
 		'searchService',
@@ -954,4 +956,71 @@ test('a sign-in code names the site it is asked from, for Chrome to fill it in (
 	await svc.getOtp({ phone: '+919876543210', domain: 'chillish.in' })
 	await svc.getOtp({ phone: '+919876543210' })
 	assert.deepEqual(bodies, [{ phone: '+919876543210', domain: 'chillish.in' }, { phone: '+919876543210' }])
+})
+
+// ---------------------------------------------------------------- composed home page (ext/layouts)
+
+test('a published home layout keeps its order and settings, and its grids carry storefront products', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: '' })
+	const seen = []
+	const svc = new m.LayoutService(async (url) => {
+		seen.push(url)
+		return Response.json({
+			data: {
+				page: 'home',
+				theme: 'default',
+				revision: 3,
+				sections: [
+					{ id: 'a', type: 'announcement-bar', settings: { text: 'Free shipping', link: '/sale' } },
+					{ id: 'h', type: 'hero', settings: { heading: 'New in', image: '/media/hero.jpg', mobile_image: 'https://cdn.example/m.jpg' } },
+					{ id: 'g', type: 'product-grid', settings: { heading: 'Best sellers', columns: 4 }, products: [product()] },
+					{ id: 'e', type: 'product-grid', settings: { heading: 'Empty' } },
+					{ id: 'x', type: 'from-the-future', settings: { anything: 1 } },
+				],
+			},
+		})
+	})
+	const layout = await svc.getHomeLayout()
+	assert.equal(seen[0], 'http://engine.test/x/layouts/home', 'no preview asked for, none sent')
+	assert.equal(layout.revision, 3)
+	assert.equal(layout.preview, false)
+	assert.deepEqual(layout.sections.map((s) => s.type), ['announcement-bar', 'hero', 'product-grid', 'product-grid', 'from-the-future'])
+	assert.deepEqual(layout.sections[0].settings, { text: 'Free shipping', link: '/sale' })
+	assert.equal(layout.sections[1].settings.image, 'http://engine.test/media/hero.jpg', 'an upload is loaded from the engine')
+	assert.equal(layout.sections[1].settings.mobile_image, 'https://cdn.example/m.jpg')
+	assert.equal(layout.sections[1].products, undefined)
+	const [card] = layout.sections[2].products
+	assert.equal(card.id, '7')
+	assert.equal(card.price, 25, 'mapped like a collection product: major units')
+	assert.equal(card.link, '/products/cotton-tee')
+	assert.deepEqual(layout.sections[3].products, [])
+	assert.deepEqual(layout.sections[4].settings, { anything: 1 }, 'an unknown type passes through for the storefront to skip')
+})
+
+test('a preview key asks for the draft', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const seen = []
+	const svc = new m.LayoutService(async (url) => {
+		seen.push(url)
+		return Response.json({ data: { page: 'home', theme: 'default', preview: true, sections: [] } })
+	})
+	const layout = await svc.getHomeLayout({ preview: 'k3y' })
+	assert.equal(seen[0], 'http://engine.test/x/layouts/home?preview=k3y')
+	assert.equal(layout.preview, true)
+	assert.deepEqual(layout.sections, [])
+})
+
+test('no layout — plugin off, nothing published, a bad key or no module — is null, and other failures still throw', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const missing = new m.LayoutService(async () =>
+		Response.json({ error: { code: 'not_found', message: 'no published layout' } }, { status: 404 }),
+	)
+	assert.equal(await missing.getHomeLayout(), null)
+	assert.equal(await missing.getHomeLayout({ preview: 'expired' }), null)
+	const noRoute = new m.LayoutService(async () => new Response('', { status: 404 }))
+	assert.equal(await noRoute.getHomeLayout(), null)
+	const broken = new m.LayoutService(async () =>
+		Response.json({ error: { code: 'internal', message: 'boom' } }, { status: 500 }),
+	)
+	await assert.rejects(broken.getHomeLayout(), (err) => err instanceof m.GoCommerceError && err.status === 500)
 })
