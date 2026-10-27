@@ -1072,3 +1072,61 @@ test('no layout — plugin off, nothing published, a bad key or no module — is
 	)
 	await assert.rejects(broken.getHomeLayout(), (err) => err instanceof m.GoCommerceError && err.status === 500)
 })
+
+test('a layout carries its theme settings, its nested uploads and its collection cards', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: '' })
+	const svc = new m.LayoutService(async () =>
+		Response.json({
+			data: {
+				page: 'home',
+				theme: 'default',
+				revision: 4,
+				theme_settings: { accent: '#aa3300', body_font: 'lora' },
+				sections: [
+					{ id: 's', type: 'slideshow', settings: { slides: [{ image: '/media/s1.jpg', mobile_image: '/media/s1m.jpg', heading: '/media/words' }, { image: 'https://cdn.example/s2.jpg' }] } },
+					{ id: 'v', type: 'video', settings: { video_file: '/media/v.mp4', poster: '/media/v.jpg' } },
+					{ id: 'c', type: 'collection-list', settings: { collections: [2, 1] }, collections: [{ id: 2, slug: 'rings', title: 'Rings', image: '/media/r.jpg' }, { id: 1, slug: 'chains', title: 'Chains' }] },
+					{ id: 'e', type: 'collection-list', settings: {} },
+				],
+			},
+		}),
+	)
+	const layout = await svc.getHomeLayout()
+	assert.deepEqual(layout.themeSettings, { accent: '#aa3300', body_font: 'lora' })
+	const slides = layout.sections[0].settings.slides
+	assert.equal(slides[0].image, 'http://engine.test/media/s1.jpg', 'an upload inside a list is loaded from the engine')
+	assert.equal(slides[0].mobile_image, 'http://engine.test/media/s1m.jpg')
+	assert.equal(slides[0].heading, '/media/words', 'only picture and video settings are addresses')
+	assert.equal(slides[1].image, 'https://cdn.example/s2.jpg')
+	assert.equal(layout.sections[1].settings.video_file, 'http://engine.test/media/v.mp4')
+	assert.equal(layout.sections[1].settings.poster, 'http://engine.test/media/v.jpg')
+	assert.deepEqual(layout.sections[2].collections, [
+		{ id: '2', title: 'Rings', slug: 'rings', link: '/collections/rings', image: 'http://engine.test/media/r.jpg' },
+		{ id: '1', title: 'Chains', slug: 'chains', link: '/collections/chains', image: null },
+	])
+	assert.deepEqual(layout.sections[3].collections, [])
+})
+
+test('a layout without theme settings says so with null', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const svc = new m.LayoutService(async () => Response.json({ data: { page: 'home', theme: 'default', sections: [] } }))
+	assert.equal((await svc.getHomeLayout()).themeSettings, null)
+})
+
+test('the theme settings come alone for every page, and a preview key asks for the draft', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const seen = []
+	const svc = new m.LayoutService(async (url) => {
+		seen.push(url)
+		return Response.json({ data: { revision: 2, settings: { radius: 'large' } } })
+	})
+	assert.deepEqual(await svc.getThemeSettings(), { revision: 2, preview: false, settings: { radius: 'large' } })
+	assert.equal(seen[0], 'http://engine.test/x/layouts/theme')
+	await svc.getThemeSettings({ preview: 'k3y' })
+	assert.equal(seen[1], 'http://engine.test/x/layouts/theme?preview=k3y')
+
+	const missing = new m.LayoutService(async () => Response.json({ error: { code: 'not_found', message: 'none' } }, { status: 404 }))
+	assert.equal(await missing.getThemeSettings(), null, 'nothing published, or the editor off: the storefront keeps its look')
+	const broken = new m.LayoutService(async () => Response.json({ error: { code: 'internal', message: 'boom' } }, { status: 500 }))
+	assert.equal(await broken.getThemeSettings(), null, 'a failure costs the look, never the page')
+})
