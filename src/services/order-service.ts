@@ -104,6 +104,33 @@ export class OrderService extends BaseService {
 	}
 
 	/**
+	 * Opens an order with its number and the email or phone on it, no code. The
+	 * engine answers one 404 for an unknown number and a wrong contact. The
+	 * token it answers is kept like an order placed in this browser, so the
+	 * order page and `getOrder` read it again.
+	 */
+	async openOrder({ orderNo, contact }: { orderNo: string; contact: string }) {
+		const res = await this.data<{ order: Order; access_token: string }>(
+			`/api/orders/${encodeURIComponent(orderNo.trim())}/open`,
+			{ method: 'POST', body: { contact: contact.trim() } },
+		)
+		rememberOrder({ number: res.order.number, token: res.access_token, cartId: '' })
+		return { data: [toOrder(res.order)] }
+	}
+
+	/**
+	 * Opens an order from the link in its emails, which carries the order's key
+	 * (`/order-tracking?order=…&key=…`). The key is kept like an order placed in
+	 * this browser, so the page can drop it from the address bar.
+	 */
+	async openOrderWithKey({ orderNo, key }: { orderNo: string; key: string }) {
+		const number = orderNo.trim()
+		const order = await this.data<Order>(`/api/orders/${encodeURIComponent(number)}`, { query: { token: key.trim() } })
+		rememberOrder({ number: order.number, token: key.trim(), cartId: '' })
+		return { data: [toOrder(order)] }
+	}
+
+	/**
 	 * Sends a 4-digit code to the email or phone on the order, when `contact`
 	 * is that email or phone. The engine answers the same either way, so this
 	 * resolves whether or not anything was sent.
