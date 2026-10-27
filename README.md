@@ -225,13 +225,13 @@ Each of these is a real gap, listed so nobody has to find it in production.
   `checkoutService.checkout(code)` for a storefront that drives its own payment
   UI. Payment is confirmed by the gateway's webhook to the engine; the order
   shows `paymentStatus` once it lands.
-- **Attribute filters inside a category.** The engine filters by attribute on
-  the whole-shop listing only; on a category page they are not applied.
+- **Filters on an older engine.** Listing filters and their counts (tags,
+  vendor, product type, category attributes, price) need an engine that counts
+  them (`GET /api/products?facets=1`, D130). Against an older one the filter
+  rail is empty and a category page's attribute filters are not applied.
 - **Tax in the bag.** The engine's cart carries no tax or total; tax is computed
   when the order is placed. The bag shows subtotal − discount + delivery, and the
   order shows the real figures.
-- **Facets.** The engine's search returns hits and a total, not distributions, so
-  category and tag facets and the price slider are not shown.
 - **Phone sign-in by code, account deletion, guest order lookup by email and
   code** are not engine features and throw.
 

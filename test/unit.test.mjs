@@ -1227,3 +1227,95 @@ test('related products fall back from the category to the collections to the new
 	assert.deepEqual(await ids('p3'), ['9', '6', '4', '1'], 'nothing to go on: the newest')
 	assert.equal((await svc.listRelatedProducts({ product: 'p3', limit: 2 })).data.length, 2, 'the limit holds')
 })
+
+// ---------------------------------------------------------------- listing facets
+
+/** An engine that answers the store, the category tree and the listing; `facets` is what its listing counts, or nothing. */
+function listingEngine(base, facets) {
+	const asked = []
+	const fetch = async (url) => {
+		const u = new URL(url)
+		if (u.pathname === '/api/checkout') return Response.json({ data: { currency: 'INR' } })
+		if (u.pathname === '/api/store') return Response.json({ data: { language: 'en' } })
+		if (u.pathname === '/api/categories') return Response.json({ data: [{ id: 1, slug: 'rings', title: 'Rings', parent_id: null }] })
+		asked.push(u)
+		const meta = { total: 1, limit: 24, offset: 0, page: 1, total_pages: 1, ...(facets && u.searchParams.get('facets') ? { facets } : {}) }
+		if (u.pathname === '/api/categories/rings') return Response.json({ data: { products: [product()] }, meta })
+		return Response.json({ data: [product()], meta })
+	}
+	m.BaseService.setCredentials({ apiUrl: base })
+	return { svc: new m.SearchService(fetch), asked }
+}
+
+test('every filter the storefront writes reaches the engine, and its counts come back in the rail’s shape', async () => {
+	const { svc, asked } = listingEngine('http://facets.test', {
+		price: { min: money(150000, 'INR'), max: money(1299950, 'INR') },
+		tags: [{ value: 'bridal', count: 4 }],
+		vendors: [{ value: 'Acme', count: 3 }],
+		product_types: [],
+		categories: [{ id: 1, slug: 'rings', title: 'Rings', count: 4 }],
+		attributes: { metal: [{ value: 'Gold', count: 2 }, { value: 'Silver, sterling', count: 1 }] },
+	})
+	const res = await svc.searchWithUrl(
+		new URL(
+			'http://storefront.test/rings?tags=bridal,daily&vendor=Acme&product_type=Ring&attributes.metal=Gold%2CSilver&priceFrom=1500&priceTo=12999.5&sort=-price&search=band',
+		),
+		'rings',
+	)
+	assert.equal(asked.length, 1, 'one request answers the whole page')
+	const q = asked[0].searchParams
+	assert.equal(asked[0].pathname, '/api/products')
+	assert.deepEqual(
+		{
+			q: q.get('q'),
+			category: q.get('category'),
+			tag: q.getAll('tag'),
+			vendor: q.getAll('vendor'),
+			product_type: q.getAll('product_type'),
+			attr: q.getAll('attr'),
+			price_min: q.get('price_min'),
+			price_max: q.get('price_max'),
+			sort: q.get('sort'),
+			order: q.get('order'),
+			facets: q.get('facets'),
+		},
+		{
+			q: 'band',
+			category: 'rings',
+			tag: ['bridal', 'daily'],
+			vendor: ['Acme'],
+			product_type: ['Ring'],
+			attr: ['metal:Gold', 'metal:Silver'],
+			price_min: '150000',
+			price_max: '1299950',
+			sort: 'price',
+			order: 'desc',
+			facets: '1',
+		},
+	)
+	assert.deepEqual(res.facets, {
+		priceStat: { min: 1500, max: 12999.5 },
+		categories: [{ name: 'Rings', slug: 'rings', count: 4 }],
+		tags: [{ name: 'bridal', count: 4 }],
+		allFilters: { vendor: { Acme: 3 }, 'attributes.metal': { Gold: 2, 'Silver, sterling': 1 } },
+	})
+	assert.deepEqual(res.categoryHierarchy, [{ name: 'Rings', slug: 'rings' }])
+})
+
+test('an engine that does not count facets is asked the old way, once, and the rail stays empty', async () => {
+	const { svc, asked } = listingEngine('http://old-engine.test', null)
+	const first = await svc.searchWithUrl(new URL('http://storefront.test/rings'), 'rings')
+	assert.deepEqual(
+		asked.map((u) => u.pathname),
+		['/api/products', '/api/categories/rings'],
+	)
+	assert.deepEqual(first.facets, { priceStat: {}, categories: [], tags: [], allFilters: {} })
+	assert.equal(first.count, 1)
+	asked.length = 0
+	await svc.searchWithUrl(new URL('http://storefront.test/rings'), 'rings')
+	assert.deepEqual(
+		asked.map((u) => u.pathname),
+		['/api/categories/rings'],
+		'remembered: no second wasted request',
+	)
+})
