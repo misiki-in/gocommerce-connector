@@ -1670,3 +1670,10 @@ test('a PIN code is looked up on the engine, and an unknown one is null', async 
 	assert.equal(await svc.lookupPostcode({ country: 'IN', postcode: '40' }), null, 'not six digits is not asked')
 	assert.deepEqual(asked, ['/api/postcodes/IN/400001', '/api/postcodes/IN/999999'])
 })
+
+test('an address keeps its label, and a label cleared in the form is sent as cleared', () => {
+	const base = { firstName: 'A', lastName: 'B', address_1: '1 Marine Drive', city: 'Mumbai', state: 'Maharashtra', zip: '400001', countryCode: 'IN' }
+	assert.equal(m.toIdentityAddress({ ...base, label: 'Work' }).label, 'Work')
+	assert.equal(m.toIdentityAddress({ ...base, label: '' }).label, '', 'the engine keeps a label it is not sent')
+	assert.equal('label' in m.toIdentityAddress(base), false, 'a form without the chips says nothing about it')
+})
