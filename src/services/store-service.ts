@@ -140,6 +140,9 @@ export class StoreService extends BaseService {
 				// The footer's sign-up box posts to ext/newsletter, and the theme editor's footer
 				// switch (D131) can only show it while that is on.
 				newsletter: { ...basePlugins.newsletter, ...flag(plugins.has('newsletter')) },
+				// Discount codes are core: every GoCommerce store takes them, so
+				// the code box is shown whatever the static record says.
+				isDiscountCoupons: { ...basePlugins.isDiscountCoupons, active: true },
 			},
 			...(menus?.length ? { menu: menus } : {}),
 			...deliverable(base, ships),

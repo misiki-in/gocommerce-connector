@@ -1480,3 +1480,134 @@ test('the newsletter sign-up is on exactly when the newsletter module is', async
 		assert.equal(store.plugins.newsletter.label, 'kept', 'the static record’s other settings stay')
 	}
 })
+
+// ---------------------------------------------------------------- 0.12.0: add-ons, suggestions, offers (D132)
+
+const withCart = async (fn) => {
+	globalThis.window = {
+		location: { origin: 'http://storefront.test' },
+		localStorage: { getItem: (k) => (k === 'cart_id' ? 'cart1' : null), setItem() {}, removeItem() {} },
+	}
+	globalThis.document = { cookie: '' }
+	try {
+		return await fn()
+	} finally {
+		delete globalThis.window
+		delete globalThis.document
+	}
+}
+
+const cartLine = (over = {}) => ({
+	id: 1, variant_id: 11, product_id: 7, sku: 'GRIP', title: 'Phone grip', quantity: 1,
+	unit_price: money(4900, 'INR'), total: money(4900, 'INR'), current_price: money(4900, 'INR'),
+	available: 5, in_stock: true, price_changed: false, ...over,
+})
+
+test('a cart line carries its compare-at price as its MRP, and says it is an add-on', () => {
+	const l = m.toCartLine(cartLine({ add_on_id: 3, add_on_for: 9, compare_at_price: money(12900, 'INR') }))
+	assert.equal(l.mrp, 129)
+	assert.equal(l.price, 49)
+	assert.equal(l.addOnId, '3')
+	assert.equal(l.addOnFor, '9')
+	const plain = m.toCartLine(cartLine({ compare_at_price: money(1000, 'INR') }))
+	assert.equal(plain.mrp, 49, 'a compare-at below the price is no MRP')
+	assert.equal(plain.addOnId, null)
+})
+
+test('a product’s add-ons arrive priced, the own price struck and the offer added', async () => {
+	m.clearStoreCache()
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const seen = []
+	const svc = new m.ProductService(async (url) => {
+		const u = new URL(String(url))
+		seen.push(u.pathname + u.search)
+		if (u.pathname === '/api/products/slug/case') return Response.json({ data: product({ id: 9, slug: 'case' }) })
+		return Response.json({
+			data: [{
+				id: 3, product_id: 9, variant_id: 11, position: 0,
+				offer_price: money(4900, 'INR'), price: money(12900, 'INR'),
+				item: { product_id: 7, slug: 'grip', title: 'Phone grip', sku: 'GRIP', image_url: '/m/g.jpg', live: true, in_stock: true },
+			}, {
+				id: 4, product_id: 9, variant_id: 12, position: 1, offer_price: null, price: money(9900, 'INR'),
+				item: { product_id: 8, slug: 'key', title: 'Key chain', sku: 'KEY', live: true, in_stock: false },
+			}],
+		})
+	})
+	const addOns = await svc.listAddOns({ product: 'case' })
+	assert.ok(seen.includes('/api/add-ons?product_id=9'))
+	assert.equal(addOns.length, 2)
+	assert.deepEqual(
+		[addOns[0].id, addOns[0].variantId, addOns[0].price, addOns[0].regularPrice, addOns[0].hasOffer, addOns[0].title],
+		['3', '11', 49, 129, true, 'Phone grip'],
+	)
+	assert.equal(addOns[1].price, 99, 'no offer is its own price')
+	assert.equal(addOns[1].hasOffer, false)
+	assert.equal(addOns[1].inStock, false)
+})
+
+test('an add-on goes into the stored cart by its id', async () => {
+	await withCart(async () => {
+		const bodies = []
+		const svc = new m.CartService(async (url, init) => {
+			const u = new URL(String(url))
+			if (init?.method === 'POST') bodies.push([u.pathname, JSON.parse(init.body)])
+			return Response.json({ data: { id: 'cart1', status: 'open', currency: 'INR', line_items: [cartLine({ add_on_id: 3 })], item_count: 1, subtotal: money(4900, 'INR') } })
+		})
+		const cart = await svc.addAddOn({ addOnId: '3' })
+		assert.deepEqual(bodies, [['/api/carts/cart1/line-items', { add_on_id: 3, quantity: 1 }]])
+		assert.equal(cart.lineItems[0].addOnId, '3')
+	})
+})
+
+test('the basket’s offers and its distance from free delivery are in major units', async () => {
+	await withCart(async () => {
+		const svc = new m.CartService(async (url) => {
+			const u = new URL(String(url))
+			if (u.pathname.endsWith('/offers')) {
+				return Response.json({ data: [
+					{ code: 'HELLO5', title: '5% off', kind: 'percentage', value_bp: 500, applies: true, amount: money(645, 'INR') },
+					{ code: 'BIG100', title: '₹100 off', kind: 'fixed', value_minor: 10000, min_subtotal_minor: 30000, applies: false, remaining: money(17100, 'INR') },
+				] })
+			}
+			if (u.pathname.endsWith('/free-shipping')) {
+				assert.equal(u.searchParams.get('country'), 'IN')
+				return Response.json({ data: { qualifies: false, threshold: money(49900, 'INR'), remaining: money(37000, 'INR'), subtotal: money(12900, 'INR') } })
+			}
+			return Response.json({ error: { code: 'not_found', message: 'nope' } }, { status: 404 })
+		})
+		const offers = await svc.getOffers()
+		assert.deepEqual(offers.map((o) => [o.code, o.applies, o.amount, o.remaining, o.isPercent, o.value]), [
+			['HELLO5', true, 6.45, null, true, 5],
+			['BIG100', false, null, 171, false, 100],
+		])
+		const free = await svc.getFreeShipping({ country: 'IN' })
+		assert.deepEqual(free, { qualifies: false, threshold: 499, remaining: 370, subtotal: 129 })
+	})
+})
+
+test('the coupon drawer lists the shop’s listed codes for the stored cart', async () => {
+	await withCart(async () => {
+		const svc = new m.CouponService(async () =>
+			Response.json({ data: [{ code: 'BIG100', title: '₹100 off', kind: 'fixed', value_minor: 10000, min_subtotal_minor: 30000, applies: false, remaining: money(17100, 'INR') }] }),
+		)
+		const page = await svc.listCoupons()
+		assert.equal(page.count, 1)
+		assert.deepEqual([page.data[0].code, page.data[0].amount, page.data[0].isPercent, page.data[0].minAmount], ['BIG100', 100, false, 300])
+		assert.match(page.data[0].description, /171/)
+	})
+})
+
+test('a basket’s suggestions fall back to its first product’s related products', async () => {
+	await withCart(async () => {
+		const svc = new m.CartService(async (url) => {
+			const u = new URL(String(url))
+			if (u.pathname === '/api/carts/cart1/cross-sells') return Response.json({ data: [] })
+			if (u.pathname === '/api/carts/cart1') return Response.json({ data: { id: 'cart1', status: 'open', currency: 'USD', line_items: [cartLine({ product_id: 7 })], item_count: 1, subtotal: money(4900) } })
+			if (u.pathname === '/api/products/7') return Response.json({ data: product({ category: null }) })
+			if (u.pathname === '/api/products') return Response.json({ data: [product({ id: 4, slug: 'p4' }), product()], meta: { total: 2, limit: 12, offset: 0 } })
+			return Response.json({ error: { code: 'not_found', message: 'nope' } }, { status: 404 })
+		})
+		const got = await svc.listCrossSells({ limit: 4 })
+		assert.deepEqual(got.map((p) => p.id), ['4'], 'what the basket holds is not suggested')
+	})
+})

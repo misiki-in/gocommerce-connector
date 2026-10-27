@@ -1,6 +1,6 @@
-import type { AppliedDiscount, Cart, CartLine, Product } from '../engine'
+import type { AppliedDiscount, Cart, CartLine, CartOffer, FreeShipping, Product } from '../engine'
 import { GoCommerceError, NotSupportedError } from '../errors'
-import { emptyCart, toCart } from '../map'
+import { emptyCart, toCart, toCartOffer, toFreeShipping, toProduct } from '../map'
 import { remember } from '../cache'
 import {
 	cartExtras,
@@ -13,6 +13,7 @@ import {
 } from '../browser'
 import { BaseService } from './base.service'
 import { StoreFacts } from './facts'
+import { ProductService } from './product-service'
 
 /** The storefront's "take this line out" sentinel, sent when − is pressed on a quantity of one. */
 const REMOVE = -9999999
@@ -109,6 +110,92 @@ export class CartService extends BaseService {
 			}
 			throw err
 		}
+	}
+
+	/**
+	 * Adds an add-on from a product's "Complete the set" (D132) at its offer
+	 * price. The product it is offered with has to be in the bag already, so
+	 * this is called after adding it; the engine refuses one too many with the
+	 * sentence the shopper is shown.
+	 */
+	async addAddOn({ cartId, addOnId, qty = 1 }: { cartId?: string | null; addOnId: string | number; qty?: number }) {
+		const id = clean(cartId) ?? storedCartId()
+		if (!id) throw new GoCommerceError('Add the product to your bag first.', 409)
+		return this.present(
+			await this.data<Cart>(`/api/carts/${encodeURIComponent(id)}/line-items`, {
+				method: 'POST',
+				body: { add_on_id: Number(addOnId), quantity: Number(qty) },
+			}),
+		)
+	}
+
+	/**
+	 * The codes the shop chose to show (D132), each with what it takes off this
+	 * bag or how much more the bag needs. None without a bag.
+	 */
+	async getOffers({ cartId }: { cartId?: string | null } = {}) {
+		const id = clean(cartId) ?? storedCartId()
+		if (!id) return []
+		try {
+			const rows = (await this.data<CartOffer[] | null>(`/api/carts/${encodeURIComponent(id)}/offers`)) ?? []
+			const currency = await this.currency()
+			return rows.map((o) => toCartOffer(o, o.amount?.currency ?? o.remaining?.currency ?? currency))
+		} catch (err) {
+			if (err instanceof GoCommerceError && err.status === 404) return []
+			throw err
+		}
+	}
+
+	/**
+	 * How far the bag is from free delivery (D132), read from the store's own
+	 * rates for the country (the store's own when none is given). Null when
+	 * the engine cannot say: a bar with a made-up figure is worse than none.
+	 */
+	async getFreeShipping({ cartId, country, state }: { cartId?: string | null; country?: string; state?: string } = {}) {
+		const id = clean(cartId) ?? storedCartId()
+		if (!id) return null
+		const where = country ?? cartExtras(id).shippingAddress?.country ?? undefined
+		try {
+			return toFreeShipping(
+				await this.data<FreeShipping>(`/api/carts/${encodeURIComponent(id)}/free-shipping`, {
+					query: { country: where || undefined, state: state || undefined },
+				}),
+			)
+		} catch (err) {
+			if (err instanceof GoCommerceError && err.status === 404) return null
+			throw err
+		}
+	}
+
+	/**
+	 * "You may be interested in" (D132): what the bag's products suggest, less
+	 * what it holds; with nothing curated, the first product's related
+	 * products, still less what it holds.
+	 */
+	async listCrossSells({ cartId, limit = 12 }: { cartId?: string | null; limit?: number } = {}) {
+		const id = clean(cartId) ?? storedCartId()
+		if (!id) return []
+		let curated: Product[] = []
+		try {
+			curated = (await this.data<Product[] | null>(`/api/carts/${encodeURIComponent(id)}/cross-sells`, { query: { limit } })) ?? []
+		} catch (err) {
+			if (!(err instanceof GoCommerceError) || err.status !== 404) throw err
+		}
+		if (curated.length) return curated.map((p) => toProduct(p))
+		let cart: Cart
+		try {
+			cart = await this.data<Cart>(`/api/carts/${encodeURIComponent(id)}`)
+		} catch {
+			return []
+		}
+		const held = new Set((cart.line_items ?? []).map((l) => String(l.product_id)))
+		const first = cart.line_items?.[0]
+		if (!first) return []
+		const related = await new ProductService(this._fetch).listRelatedProducts({
+			product: String(first.product_id),
+			limit: limit + held.size,
+		})
+		return (related.data as { id: string }[]).filter((p) => !held.has(String(p.id))).slice(0, limit)
 	}
 
 	/** `qty` is the new total; 0 takes the line out. */
