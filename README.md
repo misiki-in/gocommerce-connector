@@ -36,10 +36,11 @@ engine's routes start with `/api` too.
 
 ### The engine
 
-Start it with the modules the storefront has screens for:
+Start it with the modules the storefront has screens for. The flags go before
+`serve`; the engine ignores any that come after it.
 
 ```bash
-gocommerce serve -identity -wishlist -reviews -cms -faq -menus
+gocommerce -identity -wishlist -reviews -cms -faq -menus serve
 ```
 
 Each is optional. Without `-identity` there is no sign-in (guest checkout
@@ -50,11 +51,19 @@ business buyers (see "Beyond the storefront's screens").
 
 ### The browser and CORS
 
-The engine sends no CORS headers, so a browser on the storefront's origin cannot
-read a response from the engine's. Server-side rendering is unaffected; it is
-the bag, sign-in and checkout — which run in the browser — that need a route.
+The engine sends CORS headers only to the origins listed in
+`GOCOMMERCE_CORS_ORIGINS` (comma-separated, or `*` for any). Unset, a browser on
+the storefront's origin cannot read a response from the engine's. Server-side
+rendering is unaffected; it is the bag, sign-in and checkout — which run in the
+browser — that need a route.
 
-Proxy a path on the storefront's own origin to the engine and name it in
+The simplest is to list the storefront's origin when starting the engine,
+`GOCOMMERCE_CORS_ORIGINS=https://shop.example`, and leave
+`PUBLIC_GOCOMMERCE_PROXY_PATH` unset. The browser then calls
+`PUBLIC_GOCOMMERCE_API_URL` directly, so that has to be an address the
+shopper's browser can reach.
+
+Or proxy a path on the storefront's own origin to the engine and name it in
 `PUBLIC_GOCOMMERCE_PROXY_PATH`. The browser then calls
 `https://shop.example/gocommerce/api/carts`, and the server keeps calling
 `PUBLIC_GOCOMMERCE_API_URL` directly. With Caddy:
@@ -248,7 +257,7 @@ real one, seeding what they need through the admin API under names unique to
 the run:
 
 ```bash
-gocommerce serve -admin-token dev-token -identity -wishlist -reviews -cms -faq -menus -newsletter -contact -b2b
+gocommerce -admin-token dev-token -identity -wishlist -reviews -cms -faq -menus -newsletter -contact -b2b serve
 GOCOMMERCE_URL=http://127.0.0.1:8080 GOCOMMERCE_ADMIN_TOKEN=dev-token \
 GOCOMMERCE_TEST_DB=postgres://…/the-stores-database npm test
 ```
