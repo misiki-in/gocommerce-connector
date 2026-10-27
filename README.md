@@ -139,6 +139,7 @@ down stays best-effort: the storefront renders from its static record.
 | content pages (`/p/…`, legal pages) | `/x/cms/pages` |
 | FAQ | `/x/faq` |
 | composed home page | `/x/layouts/home` (`?preview=` for a draft) — `layoutService.getHomeLayout()`, null when the store has none; carries `themeSettings` and each collection list's `collections` |
+| product and collection templates | `/x/layouts/product`, `/x/layouts/collection` (`?preview=` for a draft) — `layoutService.getProductLayout()` and `getCollectionLayout()`, the sections the shop arranged around the page's core (`main-product`, `main-collection`); null when none is published, and the page draws as before |
 | theme settings | `/x/layouts/theme` (`?preview=` for a draft) — `layoutService.getThemeSettings()`, the store's colours, fonts and rounding for every page; null when there are none |
 | menus | `/x/navigation/menus/{header,footer}`, laid over `store.menu`; any menu by handle |
 | product specs table | the product's category attribute answers |

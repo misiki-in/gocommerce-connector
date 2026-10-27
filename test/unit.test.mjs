@@ -1130,3 +1130,64 @@ test('the theme settings come alone for every page, and a preview key asks for t
 	const broken = new m.LayoutService(async () => Response.json({ error: { code: 'internal', message: 'boom' } }, { status: 500 }))
 	assert.equal(await broken.getThemeSettings(), null, 'a failure costs the look, never the page')
 })
+
+// ---------------------------------------------------------------- product and collection templates (ext/layouts, D128)
+
+test('the product page template keeps its core where the shop put it, and its own sections', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: '' })
+	const seen = []
+	const svc = new m.LayoutService(async (url) => {
+		seen.push(url)
+		return Response.json({
+			data: {
+				page: 'product',
+				theme: 'default',
+				revision: 2,
+				sections: [
+					{ id: 'h', type: 'hero', settings: { heading: 'Made by hand', image: '/media/h.jpg' } },
+					{ id: 'product', type: 'main-product', settings: {} },
+					{ id: 'r', type: 'product-reviews', settings: null },
+					{ id: 'rel', type: 'related-products', settings: { heading: 'You may also like' } },
+					{ id: 'g', type: 'product-grid', settings: { heading: 'Pairs well with' }, products: [product()] },
+				],
+			},
+		})
+	})
+	const layout = await svc.getProductLayout()
+	assert.equal(seen[0], 'http://engine.test/x/layouts/product')
+	assert.equal(layout.page, 'product')
+	assert.equal(layout.revision, 2)
+	assert.deepEqual(layout.sections.map((s) => s.type), ['hero', 'main-product', 'product-reviews', 'related-products', 'product-grid'])
+	assert.equal(layout.sections[0].settings.image, 'http://engine.test/media/h.jpg')
+	assert.deepEqual(layout.sections[1].settings, {}, 'the core carries no settings: the catalogue draws it')
+	assert.deepEqual(layout.sections[2].settings, {}, 'a null settings object is an empty one')
+	assert.equal(layout.sections[3].settings.heading, 'You may also like')
+	assert.equal(layout.sections[4].products[0].link, '/products/cotton-tee')
+	assert.equal(layout.themeSettings, null, 'the design tokens come with the home page, not with a template')
+})
+
+test('the collection page template and its preview', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const seen = []
+	const svc = new m.LayoutService(async (url) => {
+		seen.push(url)
+		return Response.json({ data: { page: 'collection', theme: 'default', preview: true, sections: [{ id: 'products', type: 'main-collection', settings: {} }] } })
+	})
+	const layout = await svc.getCollectionLayout({ preview: 'k3y' })
+	assert.equal(seen[0], 'http://engine.test/x/layouts/collection?preview=k3y')
+	assert.equal(layout.preview, true)
+	assert.deepEqual(layout.sections.map((s) => s.id), ['products'])
+	await svc.getProductLayout({ preview: '  ' })
+	assert.equal(seen[1], 'http://engine.test/x/layouts/product', 'a blank key is no key')
+})
+
+test('no template published, the editor off, or an engine without templates: null, so the page draws as before', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const missing = new m.LayoutService(async () => Response.json({ error: { code: 'not_found', message: 'the product page has not been published' } }, { status: 404 }))
+	assert.equal(await missing.getProductLayout(), null)
+	assert.equal(await missing.getCollectionLayout({ preview: 'expired' }), null)
+	const older = new m.LayoutService(async () => new Response('', { status: 404 }))
+	assert.equal(await older.getCollectionLayout(), null)
+	const broken = new m.LayoutService(async () => Response.json({ error: { code: 'internal', message: 'boom' } }, { status: 500 }))
+	await assert.rejects(broken.getProductLayout(), (err) => err instanceof m.GoCommerceError && err.status === 500)
+})
