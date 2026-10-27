@@ -1,4 +1,5 @@
-import type { IdentityAddress } from '../engine'
+import type { IdentityAddress, Postcode } from '../engine'
+import { GoCommerceError } from '../errors'
 import { fromIdentityAddress, toIdentityAddress } from '../map'
 import { currentMe, type StorefrontAddress } from '../browser'
 import { BaseService } from './base.service'
@@ -52,6 +53,25 @@ export class AddressService extends BaseService {
 			body: toIdentityAddress(address),
 		})
 		return fromIdentityAddress(a, currentMe()?.email)
+	}
+
+	/**
+	 * The city and state for a postcode (D134), for the address form to fill
+	 * in. India's six-digit PIN codes only, from the directory the engine was
+	 * given; null for anything it cannot answer, so the form simply leaves the
+	 * fields to the shopper.
+	 */
+	async lookupPostcode({ country = 'IN', postcode }: { country?: string; postcode: string }) {
+		const code = String(postcode ?? '').trim()
+		const cc = String(country ?? '').trim().toUpperCase()
+		if (cc !== 'IN' || !/^[1-9][0-9]{5}$/.test(code)) return null
+		try {
+			const p = await this.data<Postcode>(`/api/postcodes/${cc}/${code}`)
+			return { country: p.country, postcode: p.postcode, city: p.city, state: p.state, stateCode: p.state_code }
+		} catch (err) {
+			if (err instanceof GoCommerceError && (err.status === 404 || err.status === 400)) return null
+			throw err
+		}
 	}
 
 	async deleteAddress(id: string) {

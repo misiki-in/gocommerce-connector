@@ -80,6 +80,10 @@ export type Product = {
 	seo_description: string
 	image_url?: string
 	media_count?: number
+	/** The gallery, pictures and videos in order: on the public product only (D134). */
+	media?: VariantImage[]
+	/** The sold count rounded down; absent unless the shop shows counts and it passed the threshold (D134). */
+	sold_at_least?: number
 	options: ProductOption[] | null
 	variants: Variant[] | null
 	collections: { id: number; slug: string; title: string }[] | null
@@ -430,3 +434,6 @@ export type Offer = {
 
 /** A menu's name, from `GET /x/navigation/menus`. */
 export type MenuSummary = { handle: string; title: string }
+
+/** GET /api/postcodes/{country}/{code} (D134). */
+export type Postcode = { country: string; postcode: string; city: string; state: string; state_code: string }

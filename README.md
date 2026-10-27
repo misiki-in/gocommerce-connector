@@ -127,16 +127,18 @@ down stays best-effort: the storefront renders from its static record.
 | category pages and tree | `/api/categories`, `/api/categories/{slug}` — a category sells its descendants |
 | collections | `/api/collections`, `/api/collections/{slug}` |
 | featured / trending shelves | the collection with slug `featured` / `trending`; newest products when there is none |
+| product page extras | on the product from `/api/products/slug/{slug}` (D134): `highlights` and `freeGift` from the product's own metadata, `soldAtLeast` when the shop shows sold counts (null otherwise, never zero), and the product's videos after its pictures in `images` (and alone in `videos`), so the gallery plays them |
 | bag | `/api/carts…`, `/api/carts/{token}/discount` |
 | Complete the set (add-ons) | `/api/add-ons?product_id=` — `productService.listAddOns({ product })`, each at the price ticking it adds (`price`) beside its own (`regularPrice`); `cartService.addAddOn({ addOnId })` after the product is in the bag. The engine keeps the offer price only while the product is in the bag, one for each |
-| You may also like | `/api/cross-sells?product_id=` — `productService.listCrossSells({ product })`, curated only; the bag's `/api/carts/{token}/cross-sells` — `cartService.listCrossSells()`, falling back to the first item's related products |
+| You may also like | `/api/cross-sells?product_id=` — `productService.listCrossSells({ product })`, curated only; the bag's `/api/carts/{token}/cross-sells` — `cartService.listCrossSells()`, which includes the collection the shop chose for every basket (D134), falling back to the first item's related products |
 | the bag's offers and free delivery | `/api/carts/{token}/offers` — `cartService.getOffers()` and the coupon drawer's `couponService.listCoupons()`: only the codes the shop chose to show; `/api/carts/{token}/free-shipping` — `cartService.getFreeShipping()`, from the store's own rates, null when it cannot say |
 | delivery options | `/api/checkout/rates` |
 | payment methods | `/api/checkout` — cash on delivery, Razorpay, and the first hosted-page gateway (see below) |
 | place order | `POST /api/checkout/{code}` with an `Idempotency-Key` |
 | order lookup | `/api/orders/{number}?token=` (guest), `/x/identity/me/orders` (account) |
 | sign-in, sign-up, profile, password reset | `/x/identity/*` |
-| address book | `/x/identity/me/addresses` |
+| address book | `/x/identity/me/addresses`, with its `label` (Home, Work, Other) |
+| PIN code autofill | `/api/postcodes/IN/{pin}` — `addressService.lookupPostcode({ country, postcode })`: city and state, or null when the engine has no directory or the PIN is unknown (D134) |
 | wishlist | `/x/wishlist` |
 | reviews | `/x/reviews` |
 | content pages (`/p/…`, legal pages) | `/x/cms/pages` |
