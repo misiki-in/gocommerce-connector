@@ -1460,3 +1460,23 @@ test("the store's header and footer menus are the ones the shop chose in the the
 	)
 	assert.ok(!seen.some((u) => u.endsWith('/x/navigation/menus/header')), 'the menu the shop did not choose is not read')
 })
+
+test('the newsletter sign-up is on exactly when the newsletter module is', async () => {
+	for (const [list, want] of [
+		[[{ key: 'newsletter' }], true],
+		[[], false],
+	]) {
+		m.clearStoreCache()
+		m.BaseService.setCredentials({ apiUrl: 'http://newsletter.test' })
+		m.setStaticStore(() => ({ id: 'from_config', name: 'Shop', plugins: { newsletter: { active: !want, label: 'kept' } } }))
+		const svc = new m.StoreService(async (url) => {
+			const path = new URL(String(url)).pathname
+			if (path === '/api/checkout') return Response.json({ data: { currency: 'USD', methods: [] } })
+			if (path === '/api/plugins') return Response.json({ data: list })
+			return Response.json({ data: [] })
+		})
+		const store = await svc.getStoreByIdOrDomain()
+		assert.equal(store.plugins.newsletter.active, want)
+		assert.equal(store.plugins.newsletter.label, 'kept', 'the static record’s other settings stay')
+	}
+})
