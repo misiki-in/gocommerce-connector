@@ -56,9 +56,8 @@ function variantImages(v: Variant): string[] {
 }
 
 /**
- * Every picture the public API offers for a product: the lead image, then each
- * variant's. The engine keeps the full gallery on admin routes only, so this
- * is the honest union rather than the whole media library.
+ * Every picture the public API offers for a product: the lead image, the
+ * product's gallery (on the single product, D134), then each variant's.
  */
 export function productImages(p: Product): string[] {
 	const out: string[] = []
@@ -67,8 +66,35 @@ export function productImages(p: Product): string[] {
 	}
 	// variantImages has already resolved its own; resolving twice would prefix twice.
 	push(mediaUrl(p.image_url))
+	for (const m of arr(p.media)) if (m.kind === 'image') push(mediaUrl(m.url))
 	for (const v of arr(p.variants)) for (const url of variantImages(v)) push(url)
 	return out
+}
+
+/**
+ * The product's videos, an upload or a YouTube link, in the gallery's order
+ * (D134). They follow the pictures in `images`, where the storefront's gallery
+ * plays them; a card's thumbnail is never one.
+ */
+export function productVideos(p: Product): string[] {
+	const out: string[] = []
+	for (const m of arr(p.media)) {
+		const url = m.kind === 'video' ? mediaUrl(m.url) : null
+		if (url && !out.includes(url)) out.push(url)
+	}
+	return out
+}
+
+/** A product's highlight lines: text only, the empty ones left out (D134). */
+function highlightsOf(p: Product): string[] {
+	const raw = p.metadata?.highlights
+	if (!Array.isArray(raw)) return []
+	return raw.filter((s): s is string => typeof s === 'string').map((s) => s.trim()).filter(Boolean)
+}
+
+function freeGiftOf(p: Product): string | null {
+	const raw = p.metadata?.free_gift
+	return typeof raw === 'string' && raw.trim() ? raw.trim() : null
 }
 
 export function toVariant(v: Variant, p: Product, optionless: boolean) {
@@ -127,6 +153,7 @@ export function toProduct(p: Product, extra: { categoryHierarchy?: { name: strin
 	const lead = live[0] ?? arr(p.variants)[0]
 	const optionless = arr(p.options).length === 0
 	const images = productImages(p)
+	const videos = productVideos(p)
 	const prices = live.map((v) => toMajor(v.price))
 	const tracked = live.filter((v) => v.track_inventory)
 	const category = p.category
@@ -154,8 +181,14 @@ export function toProduct(p: Product, extra: { categoryHierarchy?: { name: strin
 		originCountry: lead?.origin_country ?? null,
 		thumbnail: images[0] ?? null,
 		image_url: images[0] ?? null,
-		images: images.join(','),
+		images: [...images, ...videos].join(','),
 		imageList: images,
+		videos,
+		// What the buy box says beside the price (D134): plain text, drawn as text.
+		highlights: highlightsOf(p),
+		freeGift: freeGiftOf(p),
+		// Counted by the engine, rounded down, and absent rather than zero.
+		soldAtLeast: typeof p.sold_at_least === 'number' && p.sold_at_least > 0 ? p.sold_at_least : null,
 		// Product-level stock is what a card shows before a variant is picked:
 		// buyable when any live variant is, counted only where counting means
 		// something.

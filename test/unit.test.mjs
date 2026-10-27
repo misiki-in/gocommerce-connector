@@ -1611,3 +1611,62 @@ test('a basket’s suggestions fall back to its first product’s related produc
 		assert.deepEqual(got.map((p) => p.id), ['4'], 'what the basket holds is not suggested')
 	})
 })
+
+// ---------------------------------------------------------------- D134
+
+test('a product’s gallery carries its pictures, then its videos, and the thumbnail stays a picture', () => {
+	const p = m.toProduct(
+		product({
+			media: [
+				{ media_id: 3, url: 'https://cdn.example/lead.jpg', kind: 'image' },
+				{ media_id: 4, url: 'https://cdn.example/clip.mp4', kind: 'video' },
+				{ media_id: 5, url: 'https://cdn.example/side.jpg', kind: 'image' },
+				{ media_id: 6, url: 'https://www.youtube.com/watch?v=abc', kind: 'video' },
+			],
+		}),
+	)
+	assert.deepEqual(p.images.split(','), [
+		'https://cdn.example/lead.jpg',
+		'https://cdn.example/side.jpg',
+		'https://cdn.example/v11.jpg',
+		'https://cdn.example/clip.mp4',
+		'https://www.youtube.com/watch?v=abc',
+	])
+	assert.deepEqual(p.imageList, ['https://cdn.example/lead.jpg', 'https://cdn.example/side.jpg', 'https://cdn.example/v11.jpg'], 'a card’s list is pictures only')
+	assert.deepEqual(p.videos, ['https://cdn.example/clip.mp4', 'https://www.youtube.com/watch?v=abc'])
+	assert.equal(p.thumbnail, 'https://cdn.example/lead.jpg')
+	const onlyVideo = m.toProduct(product({ image_url: undefined, variants: [variant({ images: [], image: undefined })], media: [{ media_id: 4, url: 'https://cdn.example/clip.mp4', kind: 'video' }] }))
+	assert.equal(onlyVideo.thumbnail, null, 'a video is never drawn as an <img>')
+})
+
+test('highlights, the free gift note and the sold count cross as the engine keeps them', () => {
+	const p = m.toProduct(product({ metadata: { highlights: ['Shockproof', '', 7, 'Slim'], free_gift: ' A screen guard ' }, sold_at_least: 45000 }))
+	assert.deepEqual(p.highlights, ['Shockproof', 'Slim'])
+	assert.equal(p.freeGift, 'A screen guard')
+	assert.equal(p.soldAtLeast, 45000)
+	const bare = m.toProduct(product())
+	assert.deepEqual(bare.highlights, [])
+	assert.equal(bare.freeGift, null)
+	assert.equal(bare.soldAtLeast, null, 'no count is no count, never zero')
+})
+
+test('a PIN code is looked up on the engine, and an unknown one is null', async () => {
+	const asked = []
+	const svc = new m.AddressService(async (url) => {
+		const u = new URL(String(url))
+		asked.push(u.pathname)
+		if (u.pathname === '/api/postcodes/IN/400001')
+			return Response.json({ data: { country: 'IN', postcode: '400001', city: 'Mumbai', state: 'Maharashtra', state_code: 'MH' } })
+		return Response.json({ error: { code: 'not_found', message: 'no address is known for that postcode' } }, { status: 404 })
+	})
+	assert.deepEqual(await svc.lookupPostcode({ country: 'IN', postcode: '400001' }), {
+		country: 'IN',
+		postcode: '400001',
+		city: 'Mumbai',
+		state: 'Maharashtra',
+		stateCode: 'MH',
+	})
+	assert.equal(await svc.lookupPostcode({ country: 'IN', postcode: '999999' }), null)
+	assert.equal(await svc.lookupPostcode({ country: 'IN', postcode: '40' }), null, 'not six digits is not asked')
+	assert.deepEqual(asked, ['/api/postcodes/IN/400001', '/api/postcodes/IN/999999'])
+})
