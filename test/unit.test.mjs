@@ -747,6 +747,54 @@ test('a guest opens an order with a code, and the browser keeps it', async () =>
 	}
 })
 
+test('a guest opens an order with its number and email, or the key in their email link', async () => {
+	const store = {}
+	globalThis.window = {
+		location: { origin: 'http://storefront.test', hostname: 'storefront.test' },
+		localStorage: {
+			getItem: (k) => store[k] ?? null,
+			setItem: (k, v) => {
+				store[k] = v
+			},
+			removeItem: (k) => {
+				delete store[k]
+			},
+		},
+	}
+	globalThis.document = { cookie: '' }
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const seen = []
+	const order = (number) => ({
+		id: 7, number, status: 'confirmed', payment_status: 'pending', payment_provider: 'cod', currency: 'INR',
+		subtotal: { amount_minor: 1000, currency: 'INR' }, total: { amount_minor: 1000, currency: 'INR' },
+		email: 'a@example.com', lines: [], fulfillments: [], address: {}, created_at: '', updated_at: '',
+	})
+	try {
+		const svc = new m.OrderService(async (url, init) => {
+			seen.push(`${init.method ?? 'GET'} ${url} ${init.body ?? ''}`)
+			if (url.endsWith('/open')) return Response.json({ data: { order: order('GC-000050'), access_token: 'tok_50' } })
+			return Response.json({ data: order(url.includes('GC-000004') ? 'GC-000004' : 'GC-000050') })
+		})
+		const opened = await svc.openOrder({ orderNo: ' GC-000050 ', contact: ' a@example.com ' })
+		assert.equal(opened.data[0].orderNo, 'GC-000050')
+		await svc.getOrder('GC-000050')
+		const linked = await svc.openOrderWithKey({ orderNo: 'GC-000004', key: 'key_4' })
+		assert.equal(linked.data[0].orderNo, 'GC-000004')
+		// Kept like an order placed here, so the order page reads it again.
+		await svc.getOrder('GC-000004')
+		assert.deepEqual(seen, [
+			'POST http://engine.test/api/orders/GC-000050/open {"contact":"a@example.com"}',
+			'GET http://engine.test/api/orders/GC-000050?token=tok_50 ',
+			'GET http://engine.test/api/orders/GC-000004?token=key_4 ',
+			'GET http://engine.test/api/orders/GC-000004?token=key_4 ',
+		])
+	} finally {
+		delete globalThis.window
+		delete globalThis.document
+		m.BaseService.setCredentials({ apiUrl: undefined })
+	}
+})
+
 test('a shopper signs in with a code texted to their phone', async () => {
 	const store = {}
 	globalThis.window = {
