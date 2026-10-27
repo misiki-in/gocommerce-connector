@@ -1481,7 +1481,7 @@ test('the newsletter sign-up is on exactly when the newsletter module is', async
 	}
 })
 
-// ---------------------------------------------------------------- 0.12.0: add-ons, suggestions, offers (D132)
+// ---------------------------------------------------------------- 0.12.0: add-ons, suggestions, offers (D133)
 
 const withCart = async (fn) => {
 	globalThis.window = {

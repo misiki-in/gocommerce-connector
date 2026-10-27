@@ -113,7 +113,7 @@ export class CartService extends BaseService {
 	}
 
 	/**
-	 * Adds an add-on from a product's "Complete the set" (D132) at its offer
+	 * Adds an add-on from a product's "Complete the set" (D133) at its offer
 	 * price. The product it is offered with has to be in the bag already, so
 	 * this is called after adding it; the engine refuses one too many with the
 	 * sentence the shopper is shown.
@@ -130,7 +130,7 @@ export class CartService extends BaseService {
 	}
 
 	/**
-	 * The codes the shop chose to show (D132), each with what it takes off this
+	 * The codes the shop chose to show (D133), each with what it takes off this
 	 * bag or how much more the bag needs. None without a bag.
 	 */
 	async getOffers({ cartId }: { cartId?: string | null } = {}) {
@@ -147,7 +147,7 @@ export class CartService extends BaseService {
 	}
 
 	/**
-	 * How far the bag is from free delivery (D132), read from the store's own
+	 * How far the bag is from free delivery (D133), read from the store's own
 	 * rates for the country (the store's own when none is given). Null when
 	 * the engine cannot say: a bar with a made-up figure is worse than none.
 	 */
@@ -168,7 +168,7 @@ export class CartService extends BaseService {
 	}
 
 	/**
-	 * "You may be interested in" (D132): what the bag's products suggest, less
+	 * "You may be interested in" (D133): what the bag's products suggest, less
 	 * what it holds; with nothing curated, the first product's related
 	 * products, still less what it holds.
 	 */
