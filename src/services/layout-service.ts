@@ -63,6 +63,15 @@ export type HomeLayoutSection = {
 	collections?: LayoutCollection[]
 }
 
+/**
+ * A page the shop arranges: the home page, or the template every product or
+ * every collection is drawn in (ext/layouts, D128). A template holds its
+ * core once — `main-product` (the catalogue's pictures, price and buy box)
+ * or `main-collection` (the collection's grid) — at the place the shop put
+ * it, and the storefront draws its own core there.
+ */
+export type LayoutPage = 'home' | 'product' | 'collection'
+
 export type HomeLayout = {
 	page: string
 	theme: string
@@ -74,6 +83,9 @@ export type HomeLayout = {
 	themeSettings: ThemeSettings | null
 	sections: HomeLayoutSection[]
 }
+
+/** A composed page of any kind; a template's `themeSettings` is always null. */
+export type PageLayout = HomeLayout
 
 /** The design tokens alone, for every page the storefront draws. */
 export type ThemeSettingsResult = {
@@ -93,9 +105,28 @@ const MEDIA_KEYS = new Set(['image', 'mobile_image', 'poster', 'video_file'])
  */
 export class LayoutService extends BaseService {
 	async getHomeLayout({ preview }: { preview?: string | null } = {}): Promise<HomeLayout | null> {
+		return this.getPageLayout('home', { preview })
+	}
+
+	/**
+	 * The template every product page is drawn in: the sections around the
+	 * product's core (`main-product`). Null when none is published, so the
+	 * product page draws exactly as it did before templates existed.
+	 */
+	async getProductLayout({ preview }: { preview?: string | null } = {}): Promise<PageLayout | null> {
+		return this.getPageLayout('product', { preview })
+	}
+
+	/** The template every collection page is drawn in, around its grid (`main-collection`). */
+	async getCollectionLayout({ preview }: { preview?: string | null } = {}): Promise<PageLayout | null> {
+		return this.getPageLayout('collection', { preview })
+	}
+
+	/** Any arranged page by its key; null for none, as the three above. */
+	async getPageLayout(page: LayoutPage, { preview }: { preview?: string | null } = {}): Promise<PageLayout | null> {
 		let layout: EngineLayout
 		try {
-			layout = await this.data<EngineLayout>('/x/layouts/home', {
+			layout = await this.data<EngineLayout>(`/x/layouts/${encodeURIComponent(page)}`, {
 				query: { preview: preview?.trim() || undefined },
 			})
 		} catch (err) {
