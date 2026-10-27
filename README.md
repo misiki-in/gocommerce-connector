@@ -140,6 +140,7 @@ down stays best-effort: the storefront renders from its static record.
 | FAQ | `/x/faq` |
 | composed home page | `/x/layouts/home` (`?preview=` for a draft) — `layoutService.getHomeLayout()`, null when the store has none; carries `themeSettings` and each collection list's `collections` |
 | product and collection templates | `/x/layouts/product`, `/x/layouts/collection` (`?preview=` for a draft) — `layoutService.getProductLayout()` and `getCollectionLayout()`, the sections the shop arranged around the page's core (`main-product`, `main-collection`); null when none is published, and the page draws as before |
+| header and footer | `/x/layouts/header`, `/x/layouts/footer` (`?preview=` for a draft) — `layoutService.getHeader()` and `getFooter()`: the announcement strip and header menu, the footer's columns menu, words, newsletter switch, social links and copyright line, with the named menu read live from `/x/navigation/menus/{handle}`; null when none is published or on any failure, and the storefront keeps its own. The store's `header` and `footer` menus (`menuService.engineMenus()`, the store record's `menu`) are the ones those name |
 | theme settings | `/x/layouts/theme` (`?preview=` for a draft) — `layoutService.getThemeSettings()`, the store's colours, fonts and rounding for every page; null when there are none |
 | menus | `/x/navigation/menus/{header,footer}`, laid over `store.menu`; any menu by handle |
 | product specs table | the product's category attribute answers |
