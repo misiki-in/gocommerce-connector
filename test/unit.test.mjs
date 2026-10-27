@@ -1319,3 +1319,144 @@ test('an engine that does not count facets is asked the old way, once, and the r
 		'remembered: no second wasted request',
 	)
 })
+
+// ---------------------------------------------------------------- the header and footer (ext/layouts, D131)
+
+const engineMenu = (handle, items) => ({ id: 3, handle, title: handle === 'main' ? 'Main menu' : 'Footer', items })
+const menuItem = (id, title, kind, target, children = null) => ({ id, title, kind, target, url: '', position: id, children })
+
+test('the header comes with its settings and its menu, read live by handle', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: '' })
+	const seen = []
+	const svc = new m.LayoutService(async (url) => {
+		seen.push(url)
+		if (String(url).includes('/x/navigation/menus/main')) {
+			return Response.json({ data: engineMenu('main', [menuItem(1, 'Rings', 'collection', 'rings'), menuItem(2, 'About', 'page', 'about-us')]) })
+		}
+		return Response.json({
+			data: {
+				page: 'header',
+				theme: 'default',
+				revision: 4,
+				sections: [
+					{
+						id: 'header',
+						type: 'header',
+						settings: { show_announcement: true, announcement_text: 'Free returns', announcement_link: '/products', announcement_pages: 'all', menu: 'main' },
+					},
+				],
+			},
+		})
+	})
+	const header = await svc.getHeader()
+	assert.equal(seen[0], 'http://engine.test/x/layouts/header')
+	assert.equal(seen[1], 'http://engine.test/x/navigation/menus/main')
+	assert.equal(header.revision, 4)
+	assert.equal(header.preview, false)
+	assert.equal(header.settings.announcement_text, 'Free returns')
+	assert.equal(header.settings.announcement_pages, 'all')
+	assert.equal(header.menu.menuId, 'main')
+	assert.deepEqual(
+		header.menu.items.map((i) => [i.name, i.link]),
+		[
+			['Rings', '/collections/rings'],
+			['About', '/p/about-us'],
+		],
+	)
+})
+
+test('the footer comes with its columns menu, its words and social links; a preview key asks for the draft', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const seen = []
+	const svc = new m.LayoutService(async (url) => {
+		seen.push(url)
+		if (String(url).includes('/x/navigation/menus/')) {
+			return Response.json({ data: engineMenu('footer', [menuItem(1, 'Help', 'url', '', [menuItem(2, 'Shipping', 'page', 'shipping')])]) })
+		}
+		return Response.json({
+			data: {
+				page: 'footer',
+				theme: 'default',
+				preview: true,
+				sections: [
+					{
+						id: 'footer',
+						type: 'footer',
+						settings: {
+							menu: 'footer',
+							about: 'Small-batch goods.',
+							newsletter: true,
+							social: [{ network: 'instagram', url: 'https://instagram.com/example' }],
+							copyright: '© The shop',
+						},
+					},
+				],
+			},
+		})
+	})
+	const footer = await svc.getFooter({ preview: 'k3y' })
+	assert.equal(seen[0], 'http://engine.test/x/layouts/footer?preview=k3y')
+	assert.equal(footer.preview, true)
+	assert.equal(footer.settings.about, 'Small-batch goods.')
+	assert.equal(footer.settings.newsletter, true)
+	assert.deepEqual(footer.settings.social, [{ network: 'instagram', url: 'https://instagram.com/example' }])
+	assert.equal(footer.menu.items[0].name, 'Help')
+	assert.equal(footer.menu.items[0].items[0].link, '/p/shipping')
+})
+
+test('a menu that is gone, or none named, leaves the menu null and the rest standing', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const svc = new m.LayoutService(async (url) => {
+		if (String(url).includes('/x/navigation/menus/')) return Response.json({ error: { code: 'not_found', message: 'no menu' } }, { status: 404 })
+		return Response.json({ data: { page: 'header', theme: 'default', revision: 1, sections: [{ id: 'header', type: 'header', settings: { menu: 'gone' } }] } })
+	})
+	const header = await svc.getHeader()
+	assert.equal(header.menu, null)
+	assert.equal(header.settings.menu, 'gone')
+
+	const none = new m.LayoutService(async () =>
+		Response.json({ data: { page: 'footer', theme: 'default', revision: 1, sections: [{ id: 'footer', type: 'footer', settings: { copyright: '© Shop' } }] } }),
+	)
+	const footer = await none.getFooter()
+	assert.equal(footer.menu, null)
+	assert.equal(footer.settings.copyright, '© Shop')
+})
+
+test('no header or footer published, the editor off, an older engine, or any failure: null, so the storefront keeps its own', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const missing = new m.LayoutService(async () => Response.json({ error: { code: 'not_found', message: 'the header has not been published' } }, { status: 404 }))
+	assert.equal(await missing.getHeader(), null)
+	assert.equal(await missing.getFooter({ preview: 'expired' }), null)
+	const broken = new m.LayoutService(async () => Response.json({ error: { code: 'internal', message: 'boom' } }, { status: 500 }))
+	assert.equal(await broken.getHeader(), null, 'a failure costs the header its settings, never the page')
+	const empty = new m.LayoutService(async () => Response.json({ data: { page: 'footer', theme: 'default', revision: 1, sections: [] } }))
+	assert.equal(await empty.getFooter(), null)
+})
+
+test("the store's header and footer menus are the ones the shop chose in the theme editor", async () => {
+	// An address of its own: store-level facts are remembered per engine.
+	m.BaseService.setCredentials({ apiUrl: 'http://chosen-menus.test' })
+	const seen = []
+	const svc = new m.MenuService(async (url) => {
+		const u = String(url)
+		seen.push(u)
+		if (u.endsWith('/api/plugins')) return Response.json({ data: [{ key: 'navigation' }, { key: 'layouts' }] })
+		if (u.endsWith('/x/layouts/header')) {
+			return Response.json({ data: { page: 'header', theme: 'default', revision: 1, sections: [{ id: 'header', type: 'header', settings: { menu: 'main' } }] } })
+		}
+		if (u.endsWith('/x/layouts/footer')) return Response.json({ error: { code: 'not_found', message: 'the footer has not been published' } }, { status: 404 })
+		if (u.endsWith('/x/navigation/menus/main')) return Response.json({ data: engineMenu('main', [menuItem(1, 'Rings', 'collection', 'rings')]) })
+		if (u.endsWith('/x/navigation/menus/footer')) return Response.json({ data: engineMenu('footer', [menuItem(2, 'Help', 'page', 'help')]) })
+		return Response.json({ error: { code: 'not_found', message: u } }, { status: 404 })
+	})
+	const menus = await svc.engineMenus()
+	assert.deepEqual(
+		menus.map((x) => [x.menuId, x.name, x.items.map((i) => i.name).join(',')]),
+		[
+			['header', 'Main menu', 'Rings'],
+			['footer', 'Footer', 'Help'],
+		],
+		'the header reads the chosen menu under the name every storefront looks for; an unpublished footer keeps "footer"',
+	)
+	assert.ok(!seen.some((u) => u.endsWith('/x/navigation/menus/header')), 'the menu the shop did not choose is not read')
+})
