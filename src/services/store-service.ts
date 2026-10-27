@@ -137,6 +137,9 @@ export class StoreService extends BaseService {
 					...basePlugins.isProductReviewsAndRatings,
 					...flag(plugins.has('product-reviews')),
 				},
+				// The footer's sign-up box posts to ext/newsletter, and the theme editor's footer
+				// switch (D131) can only show it while that is on.
+				newsletter: { ...basePlugins.newsletter, ...flag(plugins.has('newsletter')) },
 			},
 			...(menus?.length ? { menu: menus } : {}),
 			...deliverable(base, ships),
