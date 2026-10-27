@@ -394,7 +394,7 @@ export function toCartLine(l: CartLine, extra: { slug?: string; thumbnail?: stri
 			l.compare_at_price && l.compare_at_price.amount_minor > l.unit_price.amount_minor
 				? toMajor(l.compare_at_price)
 				: toMajor(l.unit_price),
-		/** The add-on this line was bought as (D132), or null on an ordinary line. */
+		/** The add-on this line was bought as (D133), or null on an ordinary line. */
 		addOnId: l.add_on_id ? str(l.add_on_id) : null,
 		addOnFor: l.add_on_for ? str(l.add_on_for) : null,
 		subtotal: toMajor(l.total),
@@ -669,7 +669,7 @@ export function toUser(c: Customer) {
 export const priceOf = (m: Money | undefined) => (m ? toMajor(m) : 0)
 
 /**
- * An add-on as the buy box draws it (D132): `price` is what ticking it adds,
+ * An add-on as the buy box draws it (D133): `price` is what ticking it adds,
  * the offer where there is one, and `regularPrice` the add-on's own, struck
  * through beside it. Without an offer the two are the same and nothing is
  * struck.
@@ -690,7 +690,7 @@ export function toAddOn(a: AddOn) {
 	}
 }
 
-/** A listed code for one basket, in major units (D132). */
+/** A listed code for one basket, in major units (D133). */
 export function toCartOffer(o: CartOffer, currency: string) {
 	const isPercent = o.kind === 'percentage'
 	return {

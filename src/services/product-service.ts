@@ -99,7 +99,7 @@ export class ProductService extends CatalogService {
 	}
 
 	/**
-	 * What the shop offers with a product, ticked in its buy box (D132): each
+	 * What the shop offers with a product, ticked in its buy box (D133): each
 	 * add-on at the price ticking it adds. Only add-ons that can be bought
 	 * arrive; an engine without the route offers none.
 	 */
@@ -115,7 +115,7 @@ export class ProductService extends CatalogService {
 
 	/**
 	 * "You may also like": the products the shop chose for this one, at their
-	 * own prices (D132). Curated only, and empty when none were chosen: the
+	 * own prices (D133). Curated only, and empty when none were chosen: the
 	 * related products already fill in from the category, and the page should
 	 * not draw the same fill twice.
 	 */
