@@ -401,7 +401,9 @@ export function toIdentityAddress(a: StorefrontAddress & { isPrimary?: boolean; 
 		state: e.state ?? '',
 		postal_code: e.postal_code,
 		country: e.country,
-		...(a.label ? { label: String(a.label) } : {}),
+		// Sent whenever the form has it, empty included: the engine keeps a label it is not sent, so
+		// leaving out an emptied one would keep the old Home or Work (D134).
+		...(typeof a.label === 'string' ? { label: a.label } : {}),
 		...(a.isPrimary ? { is_default: true } : {}),
 	}
 }
