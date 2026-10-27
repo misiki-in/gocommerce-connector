@@ -1191,3 +1191,39 @@ test('no template published, the editor off, or an engine without templates: nul
 	const broken = new m.LayoutService(async () => Response.json({ error: { code: 'internal', message: 'boom' } }, { status: 500 }))
 	await assert.rejects(broken.getProductLayout(), (err) => err instanceof m.GoCommerceError && err.status === 500)
 })
+
+// ---------------------------------------------------------------- related products
+
+// A shop that never filled in categories still shows related products: the
+// product's own category first, then its collections, then the newest — never
+// the product itself, and never the same product twice.
+test('related products fall back from the category to the collections to the newest', async () => {
+	m.clearStoreCache()
+	const p = (id) => product({ id, slug: `p${id}` })
+	const answer = (path) => {
+		if (path === '/api/products/slug/p1') {
+			return { data: p(1) }
+		}
+		if (path === '/api/products/slug/p2') {
+			return { data: product({ id: 2, slug: 'p2', category: null, collections: [{ id: 5, slug: 'gifts', title: 'Gifts' }] }) }
+		}
+		if (path === '/api/products/slug/p3') {
+			return { data: product({ id: 3, slug: 'p3', category: null, collections: [] }) }
+		}
+		if (path === '/api/categories') return { data: [{ id: 3, parent_id: null, slug: 'shirts', title: 'Shirts', position: 0, full_name: 'Shirts', depth: 0, child_count: 0 }] }
+		if (path === '/api/categories/shirts') return { data: { products: [p(1), p(4)] }, meta: { total: 2, page: 1, limit: 13, total_pages: 1 } }
+		if (path === '/api/collections/gifts') return { data: { products: [p(2), p(6)] }, meta: { total: 2, page: 1, limit: 13, total_pages: 1 } }
+		if (path === '/api/products') return { data: [p(9), p(6), p(3), p(4), p(1)], meta: { total: 5, page: 1, limit: 13, total_pages: 1 } }
+		return null
+	}
+	const svc = new m.ProductService(async (url) => {
+		const body = answer(new URL(String(url)).pathname)
+		return body ? Response.json(body) : Response.json({ error: { code: 'not_found', message: 'nope' } }, { status: 404 })
+	})
+	const ids = async (slug) => (await svc.listRelatedProducts({ product: slug, limit: 12 })).data.map((x) => x.id)
+
+	assert.deepEqual(await ids('p1'), ['4', '9', '6', '3'], 'its category, then the newest, without itself')
+	assert.deepEqual(await ids('p2'), ['6', '9', '3', '4', '1'], 'no category: its collection, then the newest')
+	assert.deepEqual(await ids('p3'), ['9', '6', '4', '1'], 'nothing to go on: the newest')
+	assert.equal((await svc.listRelatedProducts({ product: 'p3', limit: 2 })).data.length, 2, 'the limit holds')
+})
