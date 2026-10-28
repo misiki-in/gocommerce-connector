@@ -143,6 +143,19 @@ export class StoreService extends BaseService {
 				// Discount codes are core: every GoCommerce store takes them, so
 				// the code box is shown whatever the static record says.
 				isDiscountCoupons: { ...basePlugins.isDiscountCoupons, active: true },
+				// The engine resizes the store's own pictures in Cloudflare's URL shape
+				// (D139), so the storefront's srcset asks it for each width. Its public
+				// origin, not the proxy path: an <img> needs no CORS, and the proxy would
+				// put every picture through the storefront's server.
+				...(profile?.images_path && this.creds.apiUrl
+					? {
+							imageCdn: {
+								provider: 'cloudflare',
+								url: this.creds.apiUrl.trim().replace(/\/+$/, '') + profile.images_path,
+								active: true,
+							},
+						}
+					: {}),
 			},
 			...(menus?.length ? { menu: menus } : {}),
 			...deliverable(base, ships),

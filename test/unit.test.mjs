@@ -1752,3 +1752,28 @@ test('an address keeps its label, and a label cleared in the form is sent as cle
 	assert.equal(m.toIdentityAddress({ ...base, label: '' }).label, '', 'the engine keeps a label it is not sent')
 	assert.equal('label' in m.toIdentityAddress(base), false, 'a form without the chips says nothing about it')
 })
+
+test('the store record points the image CDN at the engine when it resizes pictures', async () => {
+	m.clearStoreCache()
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test/', baseDomain: undefined })
+	m.setStaticStore(() => ({ id: 'from_config', name: 'Shop', plugins: { imageCdn: { provider: '', url: '', active: false } } }))
+	let imagesPath = '/images/store_01ABC'
+	const svc = new m.StoreService(async (url) => {
+		const path = new URL(String(url)).pathname
+		if (path === '/api/checkout') return Response.json({ data: { currency: 'INR', methods: [] } })
+		if (path === '/api/store') return Response.json({ data: { name: '', email: '', phone: '', images_path: imagesPath } })
+		return Response.json({ data: [] })
+	})
+	const store = await svc.getStoreByIdOrDomain()
+	assert.deepEqual(store.plugins.imageCdn, {
+		provider: 'cloudflare',
+		url: 'http://engine.test/images/store_01ABC',
+		active: true,
+	})
+
+	// An engine from before D139 says nothing, and the static record stands.
+	m.clearStoreCache()
+	imagesPath = undefined
+	const old = await svc.getStoreByIdOrDomain()
+	assert.equal(old.plugins.imageCdn.active, false)
+})
