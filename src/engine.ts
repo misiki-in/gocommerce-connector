@@ -292,7 +292,15 @@ export type ShippingRate = { rate_id: number; name: string; price: Money; zone_i
 export type Plugin = { key: string; title: string; settings: Record<string, unknown> }
 
 /** `GET /api/store`: what anyone may read about the shop. */
-export type StoreProfile = { name: string; email: string; phone: string; support_url: string; language: string }
+export type StoreProfile = {
+	name: string
+	email: string
+	phone: string
+	support_url: string
+	language: string
+	/** Where the engine serves this store's pictures resized (D139); absent on an engine before it. */
+	images_path?: string
+}
 
 export type Vendor = {
 	id: number
