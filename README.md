@@ -45,7 +45,8 @@ gocommerce -identity -wishlist -reviews -cms -faq -menus serve
 
 Each is optional. Without `-identity` there is no sign-in (guest checkout
 always works); without `-reviews` products show no stars; and so on. Add
-`-meilisearch` (with `MEILI_HOST` and keys) for price sorting and price filters,
+`-meilisearch` (with `MEILI_HOST` and keys) for typo-tolerant search once a store
+switches the Meilisearch plugin on,
 `-newsletter` and `-contact` for the signup box and contact form, and `-b2b` for
 business buyers (see "Beyond the storefront's screens").
 
@@ -152,7 +153,7 @@ down stays best-effort: the storefront renders from its static record.
 | attribute filters (`?attributes.color=Red`) | `/api/products?attr=color:Red` |
 | newsletter box | `/x/newsletter/subscribe` |
 | contact form, product enquiries | `/x/contact/messages` |
-| price sort and filter, type-ahead | `/x/meilisearch/search`, falling back to the engine's own search |
+| search words, type-ahead (plugin on) | `/x/meilisearch/search`, falling back to the engine's own search when it is off or down |
 | store record | the storefront's own config, with the engine's currency, menus and module switches over it |
 
 Blogs, banners, reels, chat, warranties, deals and uploads have no engine

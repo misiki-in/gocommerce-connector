@@ -420,7 +420,15 @@ export type SearchDoc = {
 	updated_at: number
 }
 
-export type SearchResult = { hits: SearchDoc[] | null; query: string; total: number; limit: number; offset: number }
+export type SearchResult = {
+	hits: SearchDoc[] | null
+	query: string
+	total: number
+	limit: number
+	offset: number
+	/** Meilisearch did not answer: search the product listing instead. */
+	unavailable?: boolean
+}
 
 /** One approved vendor's offer on a variant, from `GET /api/variants/{id}/offers`. Cheapest first. */
 export type Offer = {
