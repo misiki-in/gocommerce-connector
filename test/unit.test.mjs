@@ -1320,6 +1320,81 @@ test('an engine that does not count facets is asked the old way, once, and the r
 	)
 })
 
+// ---------------------------------------------------------------- Meilisearch, and the database behind it
+
+/** An engine with the Meilisearch plugin on; `index` answers its search route (a Response), or it is down. */
+function indexedEngine(base, index) {
+	const asked = []
+	const fetch = async (url) => {
+		const u = new URL(url)
+		if (u.pathname === '/api/checkout') return Response.json({ data: { currency: 'INR' } })
+		if (u.pathname === '/api/store') return Response.json({ data: { language: 'en' } })
+		if (u.pathname === '/api/plugins') return Response.json({ data: [{ key: 'meilisearch', settings: {} }] })
+		asked.push(u)
+		if (u.pathname === '/x/meilisearch/search') return index(u)
+		const facets = u.searchParams.get('facets') ? { facets: { tags: [{ value: 'silver', count: 1 }] } } : {}
+		return Response.json({ data: [product({ title: 'From the database' })], meta: { total: 1, limit: 24, offset: 0, page: 1, total_pages: 1, ...facets } })
+	}
+	m.BaseService.setCredentials({ apiUrl: base, channel: undefined })
+	return { search: new m.SearchService(fetch), typeahead: new m.MeilisearchService(fetch), products: new m.ProductService(fetch), asked }
+}
+
+const down = () => Response.json({ data: { hits: [], query: '', total: 0, limit: 24, offset: 0, configured: true, unavailable: true } })
+const hit = { id: 7, slug: 'silver-bracelet', title: 'Silver bracelet', currency: 'INR', price_minor: 250000, price_max_minor: 250000, in_stock: true, tags: [], skus: [], updated_at: 1793169689 }
+
+test('a search on a store with Meilisearch on is answered by the index, typos and all', async () => {
+	const { search, typeahead, asked } = indexedEngine('http://meili-on.test', () =>
+		Response.json({ data: { hits: [hit], total: 1, limit: 24, offset: 0 } }),
+	)
+	const res = await search.searchWithUrl(new URL('http://storefront.test/search?search=braclet'))
+	assert.deepEqual(res.data.map((p) => p.title), ['Silver bracelet'])
+	assert.equal(res.count, 1)
+	assert.deepEqual(res.facets.tags, [{ name: 'silver', count: 1 }], 'the rail is still there to narrow by')
+	assert.ok(asked.some((u) => u.pathname === '/x/meilisearch/search' && u.searchParams.get('q') === 'braclet'))
+	assert.deepEqual((await typeahead.searchAutoComplete({ query: 'braclet' })).data.map((p) => p.title), ['Silver bracelet'])
+})
+
+test('a search narrowed by tags or attributes stays with the database, which counts those filters', async () => {
+	const { search, asked } = indexedEngine('http://meili-refined.test', () => assert.fail('the index was asked'))
+	await search.searchWithUrl(new URL('http://storefront.test/search?search=band&tags=bridal'))
+	assert.ok(asked.length && asked.every((u) => u.pathname === '/api/products'), asked.map((u) => u.pathname).join(' '))
+})
+
+test('words the index has nothing for, or a channel the index does not know, are asked of the database', async () => {
+	const empty = indexedEngine('http://meili-empty.test', () => Response.json({ data: { hits: [], total: 0, limit: 24, offset: 0 } }))
+	assert.deepEqual((await empty.typeahead.searchAutoComplete({ query: 'bracelet' })).data.map((p) => p.title), ['From the database'])
+	const channel = indexedEngine('http://meili-channel.test', () => assert.fail('the index was asked'))
+	m.BaseService.setCredentials({ apiUrl: 'http://meili-channel.test', channel: 'wholesale' })
+	try {
+		assert.deepEqual((await channel.typeahead.searchAutoComplete({ query: 'bracelet' })).data.map((p) => p.title), ['From the database'])
+	} finally {
+		m.BaseService.setCredentials({ apiUrl: 'http://meili-channel.test', channel: undefined })
+	}
+})
+
+test('a store with Meilisearch off counts its facets once per search', async () => {
+	const asked = []
+	const svc = new m.SearchService(async (url) => {
+		const u = new URL(url)
+		if (u.pathname === '/api/plugins') return Response.json({ data: [] })
+		if (u.pathname === '/api/checkout') return Response.json({ data: { currency: 'INR' } })
+		asked.push(u.pathname)
+		return Response.json({ data: [product()], meta: { total: 1, limit: 24, offset: 0, page: 1, total_pages: 1, facets: { tags: [] } } })
+	})
+	m.BaseService.setCredentials({ apiUrl: 'http://meili-off.test', channel: undefined })
+	await svc.searchWithUrl(new URL('http://storefront.test/products?search=bracelet'))
+	assert.deepEqual(asked.filter((p) => p === '/api/products'), ['/api/products'])
+})
+
+test('with Meilisearch down, search, the type-ahead and a sorted listing answer from the database', async () => {
+	const { search, typeahead, products } = indexedEngine('http://meili-down.test', down)
+	assert.deepEqual((await indexedEngine('http://meili-broken.test', () => new Response('', { status: 502 })).typeahead.searchAutoComplete({ query: 'x' })).data.map((p) => p.title), ['From the database'], 'an engine error too')
+	const res = await search.searchWithUrl(new URL('http://storefront.test/search?search=bracelet&sort=-price'))
+	assert.deepEqual(res.data.map((p) => p.title), ['From the database'])
+	assert.deepEqual((await typeahead.searchAutoComplete({ query: 'bracelet' })).data.map((p) => p.title), ['From the database'])
+	assert.deepEqual((await products.list({ sort: '-price' })).data.map((p) => p.title), ['From the database'])
+})
+
 // ---------------------------------------------------------------- the header and footer (ext/layouts, D131)
 
 const engineMenu = (handle, items) => ({ id: 3, handle, title: handle === 'main' ? 'Main menu' : 'Footer', items })
