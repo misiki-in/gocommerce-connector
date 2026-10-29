@@ -3376,6 +3376,95 @@ test('a quote asks the engine with what checkout sends, and its figures arrive i
 	}
 })
 
+test('a pickup checkout needs no street: it is quoted and placed with pickup, the answers, and no address or delivery option (D271)', async () => {
+	quoteBrowser({
+		pickup: true,
+		shippingRateId: '7',
+		shippingAddress: { firstName: 'Asha', lastName: 'Rao', phone: '9800000000', email: 'asha@example.com' },
+		answers: { 'Gift message': '  Happy birthday ', 'Preferred time': '' },
+	})
+	const asked = []
+	const placed = []
+	const keys = []
+	const svc = new m.CheckoutService(async (url, init) => {
+		const u = new URL(String(url))
+		if (u.pathname === '/api/carts/cart_q') return quoteCart('')
+		if (u.pathname === '/api/checkout/quote') {
+			asked.push(Object.fromEntries(u.searchParams))
+			return Response.json({ data: { subtotal: inr(25000), shipping: inr(0), shipping_method: 'Pickup from the shop', discount: null, tax: inr(0), tax_inclusive: true, payment_fee: inr(0), total: inr(25000) } })
+		}
+		if (u.pathname === '/api/checkout/cod') {
+			placed.push(JSON.parse(init.body))
+			keys.push(init.headers['Idempotency-Key'] ?? new Headers(init.headers).get('Idempotency-Key'))
+			if (placed.length === 1) return Response.json({ error: { code: 'below_minimum_order', message: 'The minimum order is ₹200. Add ₹50 more to place it.' } }, { status: 400 })
+			const order = { id: 1, number: 'GC-2', status: 'confirmed', payment_status: 'pending', payment_provider: 'cod', currency: 'INR', total: inr(25000), address: {}, created_at: '', updated_at: '' }
+			return Response.json({ data: { order, payment: { kind: 'none', provider: 'cod' } } })
+		}
+		return Response.json({ data: [] })
+	})
+	try {
+		const quote = await svc.getQuote({ method: 'COD' })
+		assert.equal(quote.shippingCharges, 0)
+		assert.deepEqual(asked[0], { cart: 'cart_q', pickup: '1', method: 'cod', email: 'asha@example.com' })
+
+		await assert.rejects(svc.checkoutCOD({ cartId: 'cart_q' }), (err) => err.code === 'below_minimum_order' && err.message.startsWith('The minimum order is ₹200.'))
+		await svc.checkoutCOD({ cartId: 'cart_q' })
+		assert.deepEqual(placed[1], {
+			cart_id: 'cart_q',
+			email: 'asha@example.com',
+			phone: '9800000000',
+			name: 'Asha Rao',
+			pickup: true,
+			answers: { 'Gift message': 'Happy birthday' },
+		})
+		assert.equal(keys[0], keys[1], 'the same request again is a retry under the same key')
+	} finally {
+		leaveBrowser()
+	}
+})
+
+test('the bag shows no delivery charge for a pickup, whatever delivery option was kept (D271)', () => {
+	const cart = { id: 'c1', status: 'open', currency: 'INR', line_items: [], created_at: '', updated_at: '' }
+	const shown = m.toCart(cart, { pickup: true, shippingRate: { id: '7', name: 'Standard', minor: 4900, currency: 'INR' }, answers: { Q: 'A' } })
+	assert.deepEqual([shown.shippingCharges, shown.shippingMethod, shown.pickup, shown.answers], [0, 'Pickup from the shop', true, { Q: 'A' }])
+	const delivered = m.toCart(cart, { shippingRate: { id: '7', name: 'Standard', minor: 4900, currency: 'INR' } })
+	assert.deepEqual([delivered.shippingCharges, delivered.pickup, delivered.answers], [49, false, null])
+})
+
+test('pickup, a minimum order, a pause and checkout questions reach the store record only while each plugin is on (D271)', async () => {
+	m.clearStoreCache()
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test/', proxyPath: undefined, baseDomain: undefined })
+	m.setStaticStore(() => ({ id: 'from_config', name: 'Shop', plugins: {} }))
+	let plugins = [
+		{ key: 'store-pickup', settings: { address: '12 Market Road\nPune' } },
+		{ key: 'minimum-order', settings: { amount: 200 } },
+		{ key: 'pause-orders', settings: { message: '' } },
+		{ key: 'checkout-questions', settings: { questions: 'Gift message\r\n\n  Delivery date *  \n*\n' } },
+	]
+	const svc = new m.StoreService(async (url) => {
+		const path = new URL(String(url)).pathname
+		if (path === '/api/checkout') return Response.json({ data: { currency: 'INR', methods: [] } })
+		if (path === '/api/plugins') return Response.json({ data: plugins })
+		return Response.json({ data: [] })
+	})
+	const on = (await svc.getStoreByIdOrDomain()).plugins
+	assert.deepEqual(on.pickup, { active: true, address: '12 Market Road\nPune' })
+	assert.deepEqual(on.minimumOrder, { active: true, amount: 200 })
+	assert.deepEqual(on.ordersPaused, { active: true, message: 'We are not taking orders right now. Please check back soon.' })
+	assert.deepEqual(on.checkoutQuestions, {
+		active: true,
+		questions: [
+			{ text: 'Gift message', required: false },
+			{ text: 'Delivery date', required: true },
+		],
+	})
+
+	m.clearStoreCache()
+	plugins = []
+	const off = (await svc.getStoreByIdOrDomain()).plugins
+	for (const k of ['pickup', 'minimumOrder', 'ordersPaused', 'checkoutQuestions']) assert.deepEqual(off[k], { active: false }, k)
+})
+
 test('a quote with no method chosen is a preview, and PAYPAL is quoted as the store’s hosted-page gateway', async () => {
 	quoteBrowser({ shippingAddress: shopper.shippingAddress })
 	const asked = []

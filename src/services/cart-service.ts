@@ -236,11 +236,23 @@ export class CartService extends BaseService {
 		shippingAddress?: StorefrontAddress | null
 		billingAddress?: StorefrontAddress | null
 		isBillingAddressSameAsShipping?: boolean
+		/** Collect from the shop (D271), which drops any delivery option chosen. */
+		pickup?: boolean
+		/** Answers to the store's checkout questions, by the question's words (D271). */
+		answers?: Record<string, string> | null
 	}) {
 		const id = clean(args.cartId) ?? storedCartId()
 		if (!id) return emptyCart(await this.currency())
 
 		const patch: Parameters<typeof saveCartExtras>[1] = {}
+		if (args.pickup !== undefined) {
+			patch.pickup = args.pickup || undefined
+			if (args.pickup) {
+				patch.shippingRateId = null
+				patch.shippingRate = null
+			}
+		}
+		if (args.answers !== undefined) patch.answers = args.answers
 		if (args.phone !== undefined) patch.phone = args.phone || undefined
 		if (args.shippingAddress !== undefined) {
 			patch.shippingAddress = args.shippingAddress

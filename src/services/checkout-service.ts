@@ -33,9 +33,11 @@ export class CheckoutService extends BaseService {
 	/** Delivery options for the address on the cart: `{ data: [{ id, name, base_rate }] }`. */
 	async getShippingRates({ cartId }: { cartId?: string } = {}) {
 		const id = cartId || storedCartId()
-		const ship = id ? cartExtras(id).shippingAddress : null
+		const kept = id ? cartExtras(id) : {}
+		const ship = kept.shippingAddress
 		const country = String(ship?.countryCode || ship?.country || '').toUpperCase()
-		if (!id || !country) return { data: [] }
+		// Collected from the shop (D271): there is no delivery to choose.
+		if (!id || !country || kept.pickup) return { data: [] }
 		const quote = await this.data<{
 			rates: { rate_id: number; name: string; price: { amount_minor: number; currency: string } }[] | null
 			currency: string
@@ -152,10 +154,10 @@ export class CheckoutService extends BaseService {
 	 * Cashfree example is, and a plain-http dev origin should not risk the order.
 	 */
 	async checkoutCashfree({ cartId, origin }: { cartId?: string; email?: string; origin?: string } = {}) {
-		const { id, extras, address } = await this.storedCheckout(cartId)
+		const { id, extras, phone } = await this.storedCheckout(cartId)
 		// The engine would create the order, reserving its stock, and only then
 		// find that Cashfree cannot be asked without a phone number.
-		if (!extras.phone && !address.phone) throw new GoCommerceError('Add a phone number to pay with Cashfree.', 400)
+		if (!extras.phone && !phone) throw new GoCommerceError('Add a phone number to pay with Cashfree.', 400)
 		const result = await this.place('cashfree', id, origin?.startsWith('https:') ? { return_url: successUrl(origin, id) } : {})
 		const data = result.payment.client_data ?? {}
 		if (result.payment.kind !== 'client_action' || !data.payment_session_id) {
@@ -264,16 +266,18 @@ export class CheckoutService extends BaseService {
 	async getQuote({ cartId, method = '' }: { cartId?: string; method?: string } = {}) {
 		const id = cartId || storedCartId()
 		// Its order is placed, so the engine would refuse to quote the cart; the total stands.
-		if (!id || !cartExtras(id).shippingAddress || cartExtras(id).attempt?.placed) return null
+		const kept = id ? cartExtras(id) : {}
+		if (!id || !(kept.shippingAddress || kept.pickup) || kept.attempt?.placed) return null
 		const { extras, email, address } = await this.storedCheckout(id)
 		const code = method.toLowerCase() === 'paypal' ? await this.redirectGateway() : method.toLowerCase()
 		try {
 			const quote = await this.data<CheckoutQuote>('/api/checkout/quote', {
 				query: {
 					cart: id,
-					country: address.country,
-					state: address.state,
-					shipping_rate_id: extras.shippingRateId || undefined,
+					country: address?.country || undefined,
+					state: address?.state,
+					...(extras.pickup ? { pickup: '1' } : {}),
+					shipping_rate_id: (!extras.pickup && extras.shippingRateId) || undefined,
 					method: code || undefined,
 					email: email || undefined,
 				},
@@ -313,10 +317,28 @@ export class CheckoutService extends BaseService {
 		if (!id) throw new GoCommerceError('Your bag is empty.', 400)
 		const extras = cartExtras(id)
 		const ship = extras.shippingAddress
-		if (!ship) throw new GoCommerceError('Add a delivery address first.', 400)
+		// Collecting from the shop needs only a name, phone and email, which the address step
+		// keeps on the same record without a street (D271).
+		if (!ship && !extras.pickup) throw new GoCommerceError('Add a delivery address first.', 400)
 		const cart = await this.data<Cart>(`/api/carts/${encodeURIComponent(id)}`)
-		const email = cart.email || (ship.email ? String(ship.email) : '')
-		return { id, extras, email, address: toEngineAddress(ship), currency: cart.currency }
+		const email = cart.email || (ship?.email ? String(ship.email) : '')
+		const full = toEngineAddress(ship ?? {})
+		// A pickup sends no address: with none the engine taxes at the shop's own country.
+		const address = extras.pickup ? undefined : full
+		return { id, extras, email, address, name: full.name, phone: full.phone, currency: cart.currency }
+	}
+
+	/** What checkout and its quote are told about collecting from the shop and the store's questions (D271). */
+	private static choices(extras: ReturnType<typeof cartExtras>) {
+		const answers = Object.fromEntries(
+			Object.entries(extras.answers ?? {})
+				.map(([q, a]) => [q, String(a ?? '').trim()])
+				.filter(([, a]) => a),
+		)
+		return {
+			...(extras.pickup ? { pickup: true } : {}),
+			...(Object.keys(answers).length ? { answers } : {}),
+		}
 	}
 
 	private async redirectGateway(): Promise<string | undefined> {
@@ -344,15 +366,16 @@ export class CheckoutService extends BaseService {
 		cartId?: string,
 		extra: { return_url?: string; payment_data?: Record<string, string>; metadata?: Record<string, unknown> } = {},
 	): Promise<CheckoutResult> {
-		const { id, extras, email, address, currency } = await this.storedCheckout(cartId)
+		const { id, extras, email, address, name, phone, currency } = await this.storedCheckout(cartId)
 		if (!email) throw new GoCommerceError('Add an email address so we can send your receipt.', 400)
 		const body = {
 			cart_id: id,
 			email,
-			...(extras.phone || address.phone ? { phone: String(extras.phone || address.phone) } : {}),
-			...(address.name ? { name: address.name } : {}),
-			address,
-			...(extras.shippingRateId ? { shipping_rate_id: Number(extras.shippingRateId) } : {}),
+			...(extras.phone || phone ? { phone: String(extras.phone || phone) } : {}),
+			...(name ? { name } : {}),
+			...(address ? { address } : {}),
+			...(!extras.pickup && extras.shippingRateId ? { shipping_rate_id: Number(extras.shippingRateId) } : {}),
+			...CheckoutService.choices(extras),
 			...extra,
 		}
 		const serialised = JSON.stringify(body)
