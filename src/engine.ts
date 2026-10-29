@@ -304,7 +304,20 @@ export type StoreProfile = {
 	logo_url?: string
 	logo_dark_url?: string
 	icon_url?: string
+	/**
+	 * For a contact page (D156); absent on an engine before it. The address is
+	 * null unless the store chose to show it; the map location is a Google Maps
+	 * link or "lat,long"; the hours are one range per open day, Monday first.
+	 * The country (ISO alpha-2) is public on its own, for the phone's country code.
+	 */
+	country?: string
+	address?: { line1: string; line2: string; city: string; state: string; postal_code: string; country: string } | null
+	map_location?: string
+	opening_hours?: OpeningHours[]
 }
+
+/** When the shop is open on one day: `day` is mon…sun, the times 24-hour HH:MM. */
+export type OpeningHours = { day: string; opens: string; closes: string }
 
 export type Vendor = {
 	id: number
