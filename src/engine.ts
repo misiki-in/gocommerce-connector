@@ -300,6 +300,10 @@ export type StoreProfile = {
 	language: string
 	/** Where the engine serves this store's pictures resized (D139); absent on an engine before it. */
 	images_path?: string
+	/** The store's logo, logo for dark backgrounds and square icon (D148); empty or absent when it has none. */
+	logo_url?: string
+	logo_dark_url?: string
+	icon_url?: string
 }
 
 export type Vendor = {

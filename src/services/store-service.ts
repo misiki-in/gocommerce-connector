@@ -1,6 +1,6 @@
 import { GoCommerceError } from '../errors'
 import { readStaticStore } from '../static-store'
-import { BaseService } from './base.service'
+import { BaseService, mediaUrl } from './base.service'
 import { StoreFacts } from './facts'
 import { MenuService } from './menu-service'
 import { NewsletterService } from './newsletter-service'
@@ -29,12 +29,12 @@ function symbolFor(code: string): string {
 /**
  * The store record every page renders from.
  *
- * Logo, theme and the rest are the storefront's own (its static store,
- * registered through `setStaticStore`); the engine has no opinion on them.
- * Where the engine does have one, it wins:
- * - the store's name and contact, as its owner set them in the panel. One
- *   storefront serves every store under `baseDomain`, so a name in the static
- *   record would be every store's name;
+ * Theme and the rest are the storefront's own (its static store, registered
+ * through `setStaticStore`); the engine has no opinion on them. Where the
+ * engine does have one, it wins:
+ * - the store's name, contact, logo and icon, as its owner set them in the
+ *   panel. One storefront serves every store under `baseDomain`, so a name or
+ *   a logo in the static record would be every store's;
  * - the settlement currency. Every price on the site is formatted with it, and
  *   a store record saying USD over an engine charging INR would print the
  *   wrong symbol on every price;
@@ -120,6 +120,12 @@ export class StoreService extends BaseService {
 			...(profile?.name ? { name: profile.name } : {}),
 			...(profile?.email ? { businessEmail: profile.email } : {}),
 			...(profile?.phone ? { businessPhone: profile.phone } : {}),
+			// The store's pictures (D148), the same: one it has not chosen keeps the static one.
+			// Its own logo also replaces the static dark logo, which would be the deployment's
+			// mark beside this store's; without a dark one of its own, its logo is the fallback.
+			...(profile?.logo_url ? { logo: mediaUrl(profile.logo_url), logoDark: undefined } : {}),
+			...(profile?.logo_dark_url ? { logoDark: mediaUrl(profile.logo_dark_url) } : {}),
+			...(profile?.icon_url ? { favicon: mediaUrl(profile.icon_url) } : {}),
 			currencyCode: code,
 			currencySymbol: sameCurrency ? (base.currencySymbol ?? symbolFor(code)) : symbolFor(code),
 			currency: {

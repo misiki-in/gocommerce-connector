@@ -1777,3 +1777,28 @@ test('the store record points the image CDN at the engine when it resizes pictur
 	const old = await svc.getStoreByIdOrDomain()
 	assert.equal(old.plugins.imageCdn.active, false)
 })
+
+test("the store's own logo and icon win over the storefront's, and an absent one keeps the static", async () => {
+	m.clearStoreCache()
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test/', proxyPath: undefined, baseDomain: undefined })
+	m.setStaticStore(() => ({ id: 'from_config', name: 'Shop', logo: '/static-logo.png', logoDark: '/static-dark.png', favicon: '/favicon.png' }))
+	let profile = { name: '', email: '', phone: '', logo_url: '/media/stores/s1/logo.png', logo_dark_url: '', icon_url: 'https://cdn.example/icon.png' }
+	const svc = new m.StoreService(async (url) => {
+		const path = new URL(String(url)).pathname
+		if (path === '/api/checkout') return Response.json({ data: { currency: 'INR', methods: [] } })
+		if (path === '/api/store') return Response.json({ data: profile })
+		return Response.json({ data: [] })
+	})
+	const store = await svc.getStoreByIdOrDomain()
+	assert.equal(store.logo, 'http://engine.test/media/stores/s1/logo.png', "the engine's logo, on the engine's origin")
+	assert.equal(store.favicon, 'https://cdn.example/icon.png', 'an icon held elsewhere is used as it is')
+	assert.equal(store.logoDark, undefined, "the store's own logo is not paired with the deployment's dark one")
+
+	// A store that has chosen none, or an engine from before D148, changes nothing.
+	m.clearStoreCache()
+	profile = { name: '', email: '', phone: '' }
+	const plain = await svc.getStoreByIdOrDomain()
+	assert.equal(plain.logo, '/static-logo.png')
+	assert.equal(plain.favicon, '/favicon.png')
+	assert.equal(plain.logoDark, '/static-dark.png')
+})
