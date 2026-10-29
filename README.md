@@ -152,9 +152,9 @@ down stays best-effort: the storefront renders from its static record.
 | product specs table | the product's category attribute answers |
 | attribute filters (`?attributes.color=Red`) | `/api/products?attr=color:Red` |
 | newsletter box | `/x/newsletter/subscribe` |
-| contact form, product enquiries | `/x/contact/messages` |
+| contact form, product enquiries | `/x/contact/messages`, with the form's hidden `website` honeypot passed on so the engine drops what a bot filled in |
 | search words, type-ahead (plugin on) | `/x/meilisearch/search`, falling back to the engine's own search when it is off or down |
-| store record | the storefront's own config, with the engine's currency, menus and module switches over it; the store's own logo, dark logo and icon (`logo_url`, `logo_dark_url`, `icon_url` from `/api/store`, D148) replace `logo`, `logoDark` and `favicon` when it has them |
+| store record | the storefront's own config, with the engine's currency, menus and module switches over it; the store's own logo, dark logo and icon (`logo_url`, `logo_dark_url`, `icon_url` from `/api/store`, D148) replace `logo`, `logoDark` and `favicon` when it has them; for the contact page (D156), the address once the store shows it (as `address: { street, city, state, pincode, country }`), `mapLocation` and `openingHours` when set, `businessCountry` (the store's ISO country, for the phone's country code), and the `whatsapp-chat` plugin's number as `plugins.whatsappChatButton` |
 | resized product pictures | `/images/{store}/cdn-cgi/image/width=…/…` — the store record's `plugins.imageCdn` is turned on with provider `cloudflare` and the engine's `images_path` (from `/api/store`, D139) after `PUBLIC_GOCOMMERCE_API_URL`, so the storefront's srcset asks the engine for each width; an engine without it leaves the static record's setting |
 
 Blogs, banners, reels, chat, warranties, deals and uploads have no engine

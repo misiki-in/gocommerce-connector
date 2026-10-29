@@ -1802,3 +1802,63 @@ test("the store's own logo and icon win over the storefront's, and an absent one
 	assert.equal(plain.favicon, '/favicon.png')
 	assert.equal(plain.logoDark, '/static-dark.png')
 })
+
+test('a contact page gets the address, map, hours and WhatsApp number the store published, and nothing it did not', async () => {
+	m.clearStoreCache()
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test/', proxyPath: undefined, baseDomain: undefined })
+	m.setStaticStore(() => ({ id: 'from_config', name: 'Shop', plugins: { whatsappChatButton: { active: false } } }))
+	let profile = {
+		name: '',
+		email: '',
+		phone: '',
+		country: 'IN',
+		address: { line1: '12 Market Road', line2: 'Unit 4', city: 'Pune', state: 'Maharashtra', postal_code: '411001', country: 'IN' },
+		map_location: '18.5204,73.8567',
+		opening_hours: [{ day: 'mon', opens: '10:00', closes: '19:00' }],
+	}
+	let plugins = [{ key: 'whatsapp-chat', title: 'WhatsApp', settings: { phone: '919800000000', message: 'Hi' } }]
+	const svc = new m.StoreService(async (url) => {
+		const path = new URL(String(url)).pathname
+		if (path === '/api/checkout') return Response.json({ data: { currency: 'INR', methods: [] } })
+		if (path === '/api/store') return Response.json({ data: profile })
+		if (path === '/api/plugins') return Response.json({ data: plugins })
+		return Response.json({ data: [] })
+	})
+	const store = await svc.getStoreByIdOrDomain()
+	// The shape the storefront's contact page and home-page JSON-LD already read.
+	assert.deepEqual(store.address, { street: '12 Market Road, Unit 4', city: 'Pune', state: 'Maharashtra', pincode: '411001', country: 'IN' })
+	assert.equal(store.mapLocation, '18.5204,73.8567')
+	// Beside the address form's default country, never over it.
+	assert.equal(store.businessCountry, 'IN')
+	assert.equal(store.country, undefined)
+	assert.deepEqual(store.openingHours, [{ day: 'mon', opens: '10:00', closes: '19:00' }])
+	assert.deepEqual(store.plugins.whatsappChatButton, { active: true, phone: '919800000000', message: 'Hi' })
+
+	// A store that keeps its address to itself, sets no map or hours and has no
+	// WhatsApp button — or an engine from before D156 — publishes none of them.
+	m.clearStoreCache()
+	profile = { name: '', email: '', phone: '', address: null, map_location: '', opening_hours: [] }
+	plugins = []
+	const quiet = await svc.getStoreByIdOrDomain()
+	assert.equal(quiet.address, undefined)
+	assert.equal(quiet.mapLocation, undefined)
+	assert.equal(quiet.openingHours, undefined)
+	assert.equal(quiet.businessCountry, undefined)
+	assert.equal(quiet.plugins.whatsappChatButton.active, false)
+	assert.equal(quiet.plugins.whatsappChatButton.phone, undefined)
+})
+
+test('the contact form sends the honeypot, so the engine is the one that drops a bot', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test/', proxyPath: undefined, baseDomain: undefined })
+	const sent = []
+	const svc = new m.ContactService(async (url, init) => {
+		sent.push(`${new URL(String(url)).pathname} ${init.body}`)
+		return Response.json({ data: { status: 'new' } }, { status: 201 })
+	})
+	await svc.submitContactUsForm({ name: 'Asha', email: 'asha@example.com', message: 'Hello', subject: 'An order', website: 'http://spam.example' })
+	await svc.submitContactUsForm({ name: 'Asha', email: 'asha@example.com', message: 'Hello' })
+	assert.deepEqual(sent, [
+		'/x/contact/messages {"name":"Asha","email":"asha@example.com","subject":"An order","body":"Hello","website":"http://spam.example"}',
+		'/x/contact/messages {"name":"Asha","email":"asha@example.com","body":"Hello"}',
+	])
+})
