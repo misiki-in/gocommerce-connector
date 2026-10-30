@@ -183,6 +183,10 @@ export class StoreService extends BaseService {
 				// The footer's sign-up box posts to ext/newsletter, and the theme editor's footer
 				// switch (D131) can only show it while that is on.
 				newsletter: { ...basePlugins.newsletter, ...flag(plugins.has('newsletter')) },
+				// The ad and analytics tags (D160). The engine decides, not the static record:
+				// one storefront serves every store, and one store's pixel must never
+				// load on another's pages.
+				...adTags(plugins),
 				// Discount codes are core: every GoCommerce store takes them, so
 				// the code box is shown whatever the static record says.
 				isDiscountCoupons: { ...basePlugins.isDiscountCoupons, active: true },
@@ -213,6 +217,26 @@ export class StoreService extends BaseService {
 }
 
 export const storeService = new StoreService()
+
+/** Each tag's engine plugin, the setting that holds its ID, and its name on the store record. */
+const AD_TAGS = [
+	['meta-pixel', 'pixel_id', 'facebookPixel'],
+	['microsoft-clarity', 'project_id', 'microsoftClarity'],
+	['hotjar', 'site_id', 'hotjar'],
+	['tiktok-pixel', 'pixel_id', 'tiktokPixel'],
+	['pinterest-tag', 'tag_id', 'pinterestTag'],
+	['snapchat-pixel', 'pixel_id', 'snapchatPixel'],
+] as const
+
+/** On with its ID, or off with none, so a storefront has nothing to load by mistake. */
+function adTags(plugins: Map<string, { settings?: Record<string, unknown> }>) {
+	return Object.fromEntries(
+		AD_TAGS.map(([key, field, name]) => {
+			const id = String(plugins.get(key)?.settings?.[field] ?? '').trim()
+			return [name, id ? { active: true, id } : { active: false }]
+		}),
+	)
+}
 
 type Country = { code: string; name: string; [k: string]: unknown }
 
