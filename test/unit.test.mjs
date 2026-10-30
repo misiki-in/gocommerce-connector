@@ -2568,6 +2568,21 @@ test('only a missing cart starts a new one; a missing design is refused and the 
 	})
 })
 
+test('a product says whether it is made to a design, and one from an engine that does not say is unknown', () => {
+	const hit = { id: 7, slug: 'cotton-tee', title: 'Cotton tee', description: '', tags: null, currency: 'USD',
+		price_minor: 2500, price_max_minor: 2500, in_stock: true, skus: null, updated_at: 1790000000 }
+	assert.deepEqual(
+		[
+			m.toProduct(product({ designable: true })).designable,
+			m.toProduct(product({ designable: false })).designable,
+			m.toProduct(product()).designable,
+			m.toProduct(product({ designable: null })).designable,
+			m.fromSearchDoc(hit).designable,
+		],
+		[true, false, undefined, undefined, undefined],
+	)
+})
+
 test('a designed line, in the bag and on the order, carries its design and its picture through the proxy', async () => {
 	await withProxy(async () => {
 		const bagged = m.toCartLine(cartLine({ design_id: 'des_1', design_preview_url: '/media/stores/s1/prev.png' }))

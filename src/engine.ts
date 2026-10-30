@@ -84,6 +84,8 @@ export type Product = {
 	media?: VariantImage[]
 	/** The sold count rounded down; absent unless the shop shows counts and it passed the threshold (D134). */
 	sold_at_least?: number
+	/** Sold only made to a shopper's design (D174); absent from an engine that predates the flag. */
+	designable?: boolean
 	options: ProductOption[] | null
 	variants: Variant[] | null
 	collections: { id: number; slug: string; title: string }[] | null
