@@ -2084,6 +2084,51 @@ test('each ad and analytics tag reaches the storefront with its ID only while it
 	}
 })
 
+test('Google Analytics, Tag Manager and Ads reach the storefront in the shape it reads, only while set', async () => {
+	m.clearStoreCache()
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test/', proxyPath: undefined, baseDomain: undefined })
+	m.setStaticStore(() => ({ id: 'from_config', name: 'Shop', plugins: { googleTagManager: { id: 'GTM-STATIC', active: true } } }))
+	let settings = { ga4_measurement_id: ' G-ABC123XYZ ', gtm_container_id: 'GTM-K9ZZ1', google_ads_id: 'AW-1234567890', conversion_label: 'AbC-dEf_1' }
+	const svc = new m.StoreService(async (url) => {
+		const path = new URL(String(url)).pathname
+		if (path === '/api/checkout') return Response.json({ data: { currency: 'INR', methods: [] } })
+		if (path === '/api/plugins') return Response.json({ data: settings ? [{ key: 'google-analytics', title: 'Google Analytics', settings }] : [] })
+		return Response.json({ data: [] })
+	})
+
+	assert.deepEqual((await svc.getStoreByIdOrDomain()).plugins.googleTagManager, {
+		active: true,
+		tags: ['G-ABC123XYZ', 'AW-1234567890', 'GTM-K9ZZ1'],
+		conversions: [{ event: 'purchase', label: 'AbC-dEf_1' }],
+	})
+
+	// GA4 alone: no Ads conversion to send.
+	m.clearStoreCache()
+	settings = { ga4_measurement_id: 'G-ABC123XYZ', gtm_container_id: '', google_ads_id: '', conversion_label: 'orphan' }
+	assert.deepEqual((await svc.getStoreByIdOrDomain()).plugins.googleTagManager, {
+		active: true,
+		tags: ['G-ABC123XYZ'],
+		conversions: [],
+	})
+
+	// The whole `send_to` Google Ads shows, pasted as the label, still names the conversion.
+	m.clearStoreCache()
+	settings = { ga4_measurement_id: '', gtm_container_id: '', google_ads_id: '', conversion_label: 'AW-1234567890/AbC-dEf_1' }
+	assert.deepEqual((await svc.getStoreByIdOrDomain()).plugins.googleTagManager, {
+		active: true,
+		tags: ['AW-1234567890'],
+		conversions: [{ event: 'purchase', label: 'AbC-dEf_1' }],
+	})
+
+	// Installed with nothing filled in, or not installed: off, with no ID to load by mistake,
+	// whatever the static record says.
+	for (const off of [{ ga4_measurement_id: ' ', gtm_container_id: '', google_ads_id: '' }, null]) {
+		m.clearStoreCache()
+		settings = off
+		assert.deepEqual((await svc.getStoreByIdOrDomain()).plugins.googleTagManager, { active: false })
+	}
+})
+
 test('a checkout from a browser where Meta’s pixel ran tells the engine so, and one without it does not', async () => {
 	const local = {
 		cart_id: 'cart_1',
