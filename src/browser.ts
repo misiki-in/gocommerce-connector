@@ -210,19 +210,22 @@ type Touch = Partial<Record<(typeof TOUCH_FIELDS)[number], string>>
 function cleanTouch(raw: unknown, now: number): Touch | undefined {
 	if (!raw || typeof raw !== 'object') return undefined
 	const at = Date.parse(String((raw as Touch).at ?? ''))
-	if (!Number.isFinite(at) || now - at > ATTRIBUTION_DAYS * 86_400_000) return undefined
+	// A date ahead of this clock by more than a day would never expire.
+	if (!Number.isFinite(at) || now - at > ATTRIBUTION_DAYS * 86_400_000 || at - now > 86_400_000) return undefined
 	const out: Touch = {}
 	for (const k of TOUCH_FIELDS) {
 		const v = (raw as Record<string, unknown>)[k]
 		if (typeof v === 'string' && v.trim()) out[k] = v.trim().slice(0, 200)
 	}
-	return out
+	// A visit naming no source is none.
+	return Object.keys(out).length > 1 ? out : undefined
 }
 
 export function landingAttribution(now = Date.now()): { first?: Touch; last?: Touch } | undefined {
 	const saved = readJSON<{ first?: unknown; last?: unknown }>(ATTRIBUTION_KEY)
-	const first = cleanTouch(saved?.first, now)
 	const last = cleanTouch(saved?.last, now)
+	// A stale first visit leaves the last one as the first in the window.
+	const first = cleanTouch(saved?.first, now) ?? last
 	if (!first && !last) return undefined
 	return { ...(first ? { first } : {}), ...(last ? { last } : {}) }
 }
