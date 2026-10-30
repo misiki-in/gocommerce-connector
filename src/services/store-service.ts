@@ -187,6 +187,7 @@ export class StoreService extends BaseService {
 				// one storefront serves every store, and one store's pixel must never
 				// load on another's pages.
 				...adTags(plugins),
+				googleTagManager: googleTags(plugins),
 				// Discount codes are core: every GoCommerce store takes them, so
 				// the code box is shown whatever the static record says.
 				isDiscountCoupons: { ...basePlugins.isDiscountCoupons, active: true },
@@ -236,6 +237,23 @@ function adTags(plugins: Map<string, { settings?: Record<string, unknown> }>) {
 			return [name, id ? { active: true, id } : { active: false }]
 		}),
 	)
+}
+
+/**
+ * The google-analytics plugin in the shape the storefront has always read under
+ * `googleTagManager`: its tag IDs, and the Ads conversion label as the purchase's
+ * conversion. Off with no IDs when none is filled in.
+ */
+function googleTags(plugins: Map<string, { settings?: Record<string, unknown> }>) {
+	const s = plugins.get('google-analytics')?.settings ?? {}
+	const id = (field: string) => String(s[field] ?? '').trim()
+	// Google Ads shows a conversion as `send_to: 'AW-…/label'`, and an owner may paste all of it.
+	const [account, part] = id('conversion_label').split('/')
+	const label = part === undefined ? account : part
+	const ads = id('google_ads_id') || (part === undefined ? '' : account)
+	const tags = [id('ga4_measurement_id'), ads, id('gtm_container_id')].filter(Boolean)
+	if (!tags.length) return { active: false }
+	return { active: true, tags, conversions: ads && label ? [{ event: 'purchase', label }] : [] }
 }
 
 type Country = { code: string; name: string; [k: string]: unknown }
