@@ -48,7 +48,7 @@ always works); without `-reviews` products show no stars; and so on. Add
 `-meilisearch` (with `MEILI_HOST` and keys) for typo-tolerant search once a store
 switches the Meilisearch plugin on,
 `-newsletter` and `-contact` for the signup box and contact form,
-ext/notify-whatsapp for WhatsApp order updates, and `-b2b` for
+`-whatsapp` for WhatsApp order updates, and `-b2b` for
 business buyers (see "Beyond the storefront's screens").
 
 ### The browser and CORS
@@ -154,7 +154,7 @@ down stays best-effort: the storefront renders from its static record.
 | product specs table | the product's category attribute answers |
 | attribute filters (`?attributes.color=Red`) | `/api/products?attr=color:Red` |
 | newsletter box | `/x/newsletter/subscribe` |
-| WhatsApp order updates at checkout | `/x/notify-whatsapp/consent` — `whatsappService.consentOffer()`: `{ enabled, marketing }`, whether to show the order-updates box and the offers-and-reminders box; both false when ext/notify-whatsapp is not in the engine or does not answer, so checkout never waits on it. `whatsappService.setConsent({ cartId, phone, orderUpdates, marketing })` (PUT) records both answers for the phone, an unticked box as `false`, and the engine keeps the phone on the bag for basket reminders; it throws the engine's 422 when the phone is not a WhatsApp number for the store's country |
+| WhatsApp order updates at checkout | `/x/notify-whatsapp/consent` — `whatsappService.consentOffer()`: `{ enabled, marketing }`, whether to show the order-updates box and the offers-and-reminders box; both false when ext/notify-whatsapp is not in the engine or does not answer, so checkout never waits on it. `whatsappService.setConsent({ cartId, phone, orderUpdates, marketing })` (PUT) records both answers for the phone, an unticked box as `false`; with `marketing` the engine keeps the phone on the bag for basket reminders. It throws the engine's 400 (`validation_failed`) when the phone is not a WhatsApp number for the store's country |
 | contact form, product enquiries | `/x/contact/messages`, with the form's hidden `website` honeypot passed on so the engine drops what a bot filled in |
 | search words, type-ahead (plugin on) | `/x/meilisearch/search`, falling back to the engine's own search when it is off or down |
 | store record | the storefront's own config, with the engine's currency, menus and module switches over it; the store's own logo, dark logo and icon (`logo_url`, `logo_dark_url`, `icon_url` from `/api/store`, D148) replace `logo`, `logoDark` and `favicon` when it has them; for the contact page (D156), the address once the store shows it (as `address: { street, city, state, pincode, country }`), `mapLocation` and `openingHours` when set, `businessCountry` (the store's ISO country, for the phone's country code), the `whatsapp-chat` plugin's number as `plugins.whatsappChatButton`, and Google Customer Reviews (ext/google-reviews) as `plugins.googleReviewsOptIn` (`active` while the survey is on) and `plugins.googleStoreWidget` (`{ active, position: 'RIGHT_BOTTOM' \| 'LEFT_BOTTOM' }`, off without the survey) |

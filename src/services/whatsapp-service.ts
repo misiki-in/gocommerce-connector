@@ -39,9 +39,10 @@ export class WhatsappService extends BaseService {
 	}
 
 	/**
-	 * Records both answers for the phone as typed, against the bag (the engine
-	 * keeps the phone on it for basket reminders). Throws the engine's 422 when
-	 * the phone is not a WhatsApp number for the store's country.
+	 * Records both answers for the phone as typed, against the bag (with
+	 * `marketing`, the engine keeps the phone on it for basket reminders). Throws
+	 * the engine's 400 (`validation_failed`) when the phone is not a WhatsApp
+	 * number for the store's country.
 	 */
 	async setConsent({
 		cartId,

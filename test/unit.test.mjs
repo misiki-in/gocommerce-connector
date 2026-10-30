@@ -563,7 +563,10 @@ test('a WhatsApp answer is sent for the bag with both boxes, unticked as false',
 		sent.push({ url: String(url), method: init?.method, body: JSON.parse(init.body) })
 		const b = JSON.parse(init.body)
 		if (b.phone === '12') {
-			return Response.json({ error: { code: 'invalid', message: 'not a WhatsApp number' } }, { status: 422 })
+			return Response.json(
+				{ error: { code: 'validation_failed', message: 'not a WhatsApp number' } },
+				{ status: 400 },
+			)
 		}
 		return Response.json({ data: { phone: '+919876543210', order_updates: b.order_updates, marketing: b.marketing } })
 	})
@@ -587,7 +590,7 @@ test('a WhatsApp answer is sent for the bag with both boxes, unticked as false',
 		])
 		await assert.rejects(
 			svc.setConsent({ phone: '12', orderUpdates: true, marketing: false }),
-			(err) => err instanceof m.GoCommerceError && err.status === 422 && /WhatsApp number/.test(err.message),
+			(err) => err instanceof m.GoCommerceError && err.status === 400 && /WhatsApp number/.test(err.message),
 		)
 	} finally {
 		delete globalThis.window
