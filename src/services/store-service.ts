@@ -180,9 +180,22 @@ export class StoreService extends BaseService {
 					...basePlugins.isProductReviewsAndRatings,
 					...flag(plugins.has('product-reviews')),
 				},
+				// Google Customer Reviews (ext/google-reviews): the confirmation page's survey offer,
+				// whose fields the engine builds from the order, and Google's store widget, which
+				// belongs to the same programme and so needs the survey on.
+				googleReviewsOptIn: {
+					...basePlugins.googleReviewsOptIn,
+					...flag(googleSetting(plugins, 'customer_reviews') === true),
+				},
+				googleStoreWidget: storeWidget(plugins),
 				// The footer's sign-up box posts to ext/newsletter, and the theme editor's footer
 				// switch (D131) can only show it while that is on.
 				newsletter: { ...basePlugins.newsletter, ...flag(plugins.has('newsletter')) },
+				// The ad and analytics tags (D160). The engine decides, not the static record:
+				// one storefront serves every store, and one store's pixel must never
+				// load on another's pages.
+				...adTags(plugins),
+				googleTagManager: googleTags(plugins),
 				// Discount codes are core: every GoCommerce store takes them, so
 				// the code box is shown whatever the static record says.
 				isDiscountCoupons: { ...basePlugins.isDiscountCoupons, active: true },
@@ -214,6 +227,43 @@ export class StoreService extends BaseService {
 
 export const storeService = new StoreService()
 
+/** Each tag's engine plugin, the setting that holds its ID, and its name on the store record. */
+const AD_TAGS = [
+	['meta-pixel', 'pixel_id', 'facebookPixel'],
+	['microsoft-clarity', 'project_id', 'microsoftClarity'],
+	['hotjar', 'site_id', 'hotjar'],
+	['tiktok-pixel', 'pixel_id', 'tiktokPixel'],
+	['pinterest-tag', 'tag_id', 'pinterestTag'],
+	['snapchat-pixel', 'pixel_id', 'snapchatPixel'],
+] as const
+
+/** On with its ID, or off with none, so a storefront has nothing to load by mistake. */
+function adTags(plugins: Map<string, { settings?: Record<string, unknown> }>) {
+	return Object.fromEntries(
+		AD_TAGS.map(([key, field, name]) => {
+			const id = String(plugins.get(key)?.settings?.[field] ?? '').trim()
+			return [name, id ? { active: true, id } : { active: false }]
+		}),
+	)
+}
+
+/**
+ * The google-analytics plugin in the shape the storefront has always read under
+ * `googleTagManager`: its tag IDs, and the Ads conversion label as the purchase's
+ * conversion. Off with no IDs when none is filled in.
+ */
+function googleTags(plugins: Map<string, { settings?: Record<string, unknown> }>) {
+	const s = plugins.get('google-analytics')?.settings ?? {}
+	const id = (field: string) => String(s[field] ?? '').trim()
+	// Google Ads shows a conversion as `send_to: 'AW-…/label'`, and an owner may paste all of it.
+	const [account, part] = id('conversion_label').split('/')
+	const label = part === undefined ? account : part
+	const ads = id('google_ads_id') || (part === undefined ? '' : account)
+	const tags = [id('ga4_measurement_id'), ads, id('gtm_container_id')].filter(Boolean)
+	if (!tags.length) return { active: false }
+	return { active: true, tags, conversions: ads && label ? [{ event: 'purchase', label }] : [] }
+}
+
 type Country = { code: string; name: string; [k: string]: unknown }
 
 /**
@@ -240,6 +290,16 @@ function regionName(code: string): string {
 	} catch {
 		return code
 	}
+}
+
+const googleSetting = (plugins: Map<string, { settings?: Record<string, unknown> }>, key: string) =>
+	plugins.get('google-reviews')?.settings?.[key]
+
+/** Google's store widget, where the store placed it; off without the survey. */
+function storeWidget(plugins: Map<string, { settings?: Record<string, unknown> }>) {
+	const where = googleSetting(plugins, 'store_widget')
+	if (googleSetting(plugins, 'customer_reviews') !== true || !where) return { active: false }
+	return { active: true, position: where === 'Bottom left' ? 'LEFT_BOTTOM' : 'RIGHT_BOTTOM' }
 }
 
 /** The sign-in form's names for the store's choice (D116, D118). */

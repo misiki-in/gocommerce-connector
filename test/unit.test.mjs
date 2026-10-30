@@ -277,6 +277,179 @@ test('an order is its own parent, with lines as an array', () => {
 	assert.equal(o.shippingAddress.firstName, 'Ada')
 })
 
+// ---------------------------------------------------------- google reviews
+
+const googlePlace = {
+	rating: 4.6,
+	user_rating_count: 182,
+	google_maps_uri: 'https://maps.google.com/?cid=1',
+	reviews: [
+		{
+			author: {
+				name: 'Asha R',
+				uri: 'https://www.google.com/maps/contrib/1',
+				photo_uri: 'https://lh3.googleusercontent.com/a/1',
+			},
+			rating: 5,
+			text: 'Lovely staff.',
+			language: 'en',
+			relative_time: 'a month ago',
+			publish_time: '2026-09-28T10:00:00Z',
+			visit_date: '2026-09',
+			google_maps_uri: 'https://www.google.com/maps/reviews/1',
+			flag_uri: 'https://www.google.com/local/review/rap/report?postId=1',
+		},
+		{ author: { name: 'Vikram' }, rating: 1 },
+	],
+}
+
+/** An engine with ext/google-reviews: `plugins` is GET /api/plugins, `answers` the module's routes. */
+function googleEngine(plugins, answers, seen) {
+	return async (url) => {
+		const u = new URL(String(url))
+		seen?.push(u.pathname + u.search)
+		if (u.pathname === '/api/plugins') return Response.json({ data: plugins })
+		const answer = answers[u.pathname]
+		if (typeof answer === 'number') return Response.json({ error: { code: 'x', message: 'no' } }, { status: answer })
+		if (answer) return Response.json({ data: answer })
+		return Response.json({ error: { code: 'not_found', message: 'no route' } }, { status: 404 })
+	}
+}
+
+test("Google's rating and reviews are Google's answer, asked for every time, and nothing while off", async () => {
+	m.clearStoreCache()
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: undefined, baseDomain: undefined })
+	const seen = []
+	const on = [{ key: 'google-reviews', title: 'Google reviews', settings: { show_place: true } }]
+	const svc = new m.GoogleReviewService(googleEngine(on, { '/x/google-reviews/place': googlePlace }, seen))
+	const got = await svc.place()
+	assert.equal(got.rating, 4.6)
+	assert.equal(got.count, 182)
+	assert.equal(got.mapsUrl, 'https://maps.google.com/?cid=1')
+	assert.deepEqual(got.reviews[0], {
+		author: 'Asha R',
+		authorUrl: 'https://www.google.com/maps/contrib/1',
+		authorPhoto: 'https://lh3.googleusercontent.com/a/1',
+		rating: 5,
+		text: 'Lovely staff.',
+		language: 'en',
+		when: 'a month ago',
+		visited: '2026-09',
+		url: 'https://www.google.com/maps/reviews/1',
+		reportUrl: 'https://www.google.com/local/review/rap/report?postId=1',
+	})
+	// The one-star review is there too, as Google sent it.
+	assert.equal(got.reviews[1].rating, 1)
+	assert.equal(got.reviews[1].text, '')
+	// Google's terms forbid keeping the answer, so a second read asks again.
+	await svc.place()
+	assert.equal(seen.filter((p) => p === '/x/google-reviews/place').length, 2)
+
+	// The day's lookups spent, or Google refusing: nothing, not an error.
+	for (const status of [429, 502]) {
+		m.clearStoreCache()
+		const quiet = new m.GoogleReviewService(googleEngine(on, { '/x/google-reviews/place': status }))
+		assert.equal(await quiet.place(), null)
+	}
+	// Anything else is still a failure the caller sees.
+	m.clearStoreCache()
+	const broken = new m.GoogleReviewService(googleEngine(on, { '/x/google-reviews/place': 500 }))
+	await assert.rejects(broken.place(), (err) => err instanceof m.GoCommerceError && err.status === 500)
+
+	// A place with no ratings yet shows nothing rather than "0 reviews".
+	m.clearStoreCache()
+	const unrated = new m.GoogleReviewService(
+		googleEngine(on, { '/x/google-reviews/place': { ...googlePlace, rating: 0, user_rating_count: 0, reviews: [] } }),
+	)
+	assert.equal(await unrated.place(), null)
+
+	// The switch off, or the plugin off: Google is not asked at all.
+	for (const plugins of [[{ key: 'google-reviews', title: 'Google reviews', settings: { show_place: false } }], []]) {
+		m.clearStoreCache()
+		const asked = []
+		const off = new m.GoogleReviewService(googleEngine(plugins, { '/x/google-reviews/place': googlePlace }, asked))
+		assert.equal(await off.place(), null)
+		assert.ok(!asked.includes('/x/google-reviews/place'), `asked Google with ${JSON.stringify(plugins)}`)
+	}
+})
+
+test("the survey is asked for with the order's own key, and only for an order placed in this browser", async () => {
+	const kept = { gocommerce_orders: JSON.stringify([{ number: 'GC-000049', token: 'tok_49', cartId: 'c1' }]) }
+	globalThis.window = {
+		location: { origin: 'http://storefront.test', hostname: 'storefront.test' },
+		localStorage: { getItem: (k) => kept[k] ?? null, setItem() {}, removeItem() {} },
+	}
+	globalThis.document = { cookie: '' }
+	const survey = {
+		merchant_id: 1234567,
+		order_id: 'GC-000049',
+		email: 'a@example.com',
+		delivery_country: 'IN',
+		estimated_delivery_date: '2026-11-04',
+		opt_in_style: 'BOTTOM_TRAY',
+	}
+	try {
+		m.clearStoreCache()
+		m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: undefined, baseDomain: undefined })
+		const on = [{ key: 'google-reviews', title: 'Google reviews', settings: { customer_reviews: true } }]
+		const seen = []
+		const svc = new m.GoogleReviewService(googleEngine(on, { '/x/google-reviews/survey/GC-000049': survey }, seen))
+		assert.deepEqual(await svc.survey('GC-000049'), survey)
+		assert.deepEqual(
+			seen.filter((p) => p.startsWith('/x/')),
+			['/x/google-reviews/survey/GC-000049?token=tok_49'],
+		)
+
+		// Another browser's order, or none: there is no key, so nothing is asked.
+		assert.equal(await svc.survey('GC-000050'), null)
+		assert.equal(await svc.survey(''), null)
+		assert.equal(seen.filter((p) => p.startsWith('/x/')).length, 1)
+
+		// The survey switched off: nothing.
+		m.clearStoreCache()
+		const off = new m.GoogleReviewService(
+			googleEngine([{ key: 'google-reviews', title: 'Google reviews', settings: { customer_reviews: false } }], {
+				'/x/google-reviews/survey/GC-000049': survey,
+			}),
+		)
+		assert.equal(await off.survey('GC-000049'), null)
+	} finally {
+		delete globalThis.window
+		delete globalThis.document
+	}
+})
+
+test("the store record turns on Google's survey and store widget from the engine alone", async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test/', proxyPath: undefined, baseDomain: undefined })
+	m.setStaticStore(() => ({ id: 'from_config', name: 'Shop', plugins: { googleReviewsOptIn: { active: true } } }))
+	let settings = { customer_reviews: true, store_widget: 'Bottom left', show_place: true }
+	const svc = new m.StoreService(async (url) => {
+		const path = new URL(String(url)).pathname
+		if (path === '/api/checkout') return Response.json({ data: { currency: 'INR', methods: [] } })
+		if (path === '/api/plugins')
+			return Response.json({ data: settings ? [{ key: 'google-reviews', title: 'Google reviews', settings }] : [] })
+		return Response.json({ data: [] })
+	})
+	m.clearStoreCache()
+	let store = await svc.getStoreByIdOrDomain()
+	assert.equal(store.plugins.googleReviewsOptIn.active, true)
+	assert.deepEqual(store.plugins.googleStoreWidget, { active: true, position: 'LEFT_BOTTOM' })
+
+	// The widget belongs to the survey's programme: without the survey, no widget.
+	m.clearStoreCache()
+	settings = { customer_reviews: false, store_widget: 'Bottom right' }
+	store = await svc.getStoreByIdOrDomain()
+	assert.equal(store.plugins.googleReviewsOptIn.active, false)
+	assert.deepEqual(store.plugins.googleStoreWidget, { active: false })
+
+	// The plugin off: both off, whatever the static record says.
+	m.clearStoreCache()
+	settings = null
+	store = await svc.getStoreByIdOrDomain()
+	assert.equal(store.plugins.googleReviewsOptIn.active, false)
+	assert.equal(store.plugins.googleStoreWidget.active, false)
+})
+
 // ---------------------------------------------------------------- the surface
 
 test('every service the storefront imports by name is exported', () => {
@@ -293,6 +466,8 @@ test('every service the storefront imports by name is exported', () => {
 		'addressService',
 		'wishlistService',
 		'reviewService',
+		'googleReviewService',
+		'GoogleReviewService',
 		'storeService',
 		'menuService',
 		'pageService',
@@ -336,6 +511,8 @@ test('every service the storefront imports by name is exported', () => {
 		'varniCustomDesignService',
 		'varniCustomProductService',
 		'autocompleteService',
+		'whatsappService',
+		'WhatsappService',
 	]) {
 		assert.ok(m[name] !== undefined, `${name} is exported`)
 	}
@@ -344,6 +521,81 @@ test('every service the storefront imports by name is exported', () => {
 	assert.equal(typeof m.setStaticStore, 'function')
 	assert.equal(typeof m.serveRestLocally, 'function')
 	assert.equal(typeof m.searchService.emptyResult().data.length, 'number', 'emptyResult is synchronous')
+})
+
+test('checkout offers the WhatsApp boxes the store has, and none when the engine cannot say', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: undefined, baseDomain: undefined })
+	const answering = (status, body) => new m.WhatsappService(async () => Response.json(body, { status }))
+	assert.deepEqual(await answering(200, { data: { enabled: true, marketing: true } }).consentOffer(), {
+		enabled: true,
+		marketing: true,
+	})
+	assert.deepEqual(await answering(200, { data: { enabled: true, marketing: false } }).consentOffer(), {
+		enabled: true,
+		marketing: false,
+	})
+	// Marketing alone is not an offer: there is no order-update box to sit under.
+	assert.deepEqual(await answering(200, { data: { enabled: false, marketing: true } }).consentOffer(), {
+		enabled: false,
+		marketing: false,
+	})
+	for (const [status, body] of [
+		[404, { error: { code: 'not_found', message: 'no route for GET /x/notify-whatsapp/consent' } }],
+		[500, { error: { code: 'internal', message: 'boom' } }],
+	]) {
+		assert.deepEqual(await answering(status, body).consentOffer(), { enabled: false, marketing: false })
+	}
+	const down = new m.WhatsappService(async () => {
+		throw new TypeError('fetch failed')
+	})
+	assert.deepEqual(await down.consentOffer(), { enabled: false, marketing: false })
+})
+
+test('a WhatsApp answer is sent for the bag with both boxes, unticked as false', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: undefined, baseDomain: undefined })
+	globalThis.window = {
+		location: { origin: 'http://storefront.test', hostname: 'storefront.test' },
+		localStorage: { getItem: (k) => (k === 'cart_id' ? 'cart_tok' : null), setItem() {}, removeItem() {} },
+	}
+	globalThis.document = { cookie: '' }
+	const sent = []
+	const svc = new m.WhatsappService(async (url, init) => {
+		sent.push({ url: String(url), method: init?.method, body: JSON.parse(init.body) })
+		const b = JSON.parse(init.body)
+		if (b.phone === '12') {
+			return Response.json(
+				{ error: { code: 'validation_failed', message: 'not a WhatsApp number' } },
+				{ status: 400 },
+			)
+		}
+		return Response.json({ data: { phone: '+919876543210', order_updates: b.order_updates, marketing: b.marketing } })
+	})
+	try {
+		assert.deepEqual(
+			await svc.setConsent({ cartId: 'cart_abc', phone: ' 98765 43210 ', orderUpdates: true, marketing: false }),
+			{ phone: '+919876543210', orderUpdates: true, marketing: false },
+		)
+		await svc.setConsent({ phone: '9876543210', orderUpdates: false, marketing: false })
+		assert.deepEqual(sent, [
+			{
+				url: 'http://engine.test/x/notify-whatsapp/consent',
+				method: 'PUT',
+				body: { cart_id: 'cart_abc', phone: '98765 43210', order_updates: true, marketing: false },
+			},
+			{
+				url: 'http://engine.test/x/notify-whatsapp/consent',
+				method: 'PUT',
+				body: { cart_id: 'cart_tok', phone: '9876543210', order_updates: false, marketing: false },
+			},
+		])
+		await assert.rejects(
+			svc.setConsent({ phone: '12', orderUpdates: true, marketing: false }),
+			(err) => err instanceof m.GoCommerceError && err.status === 400 && /WhatsApp number/.test(err.message),
+		)
+	} finally {
+		delete globalThis.window
+		delete globalThis.document
+	}
 })
 
 test('credentials merge, so an unset variable does not erase a set one', () => {
@@ -1882,4 +2134,278 @@ test('the contact form sends the honeypot, so the engine is the one that drops a
 		'/x/contact/messages {"name":"Asha","email":"asha@example.com","subject":"An order","body":"Hello","website":"http://spam.example"}',
 		'/x/contact/messages {"name":"Asha","email":"asha@example.com","body":"Hello"}',
 	])
+})
+
+test('each ad and analytics tag reaches the storefront with its ID only while it is on', async () => {
+	m.clearStoreCache()
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test/', proxyPath: undefined, baseDomain: undefined })
+	m.setStaticStore(() => ({ id: 'from_config', name: 'Shop', plugins: { facebookPixel: {} } }))
+	let plugins = [
+		{ key: 'meta-pixel', title: 'Meta pixel', settings: { pixel_id: '1234567890' } },
+		{ key: 'microsoft-clarity', title: 'Microsoft Clarity', settings: { project_id: 'abcd1234ef' } },
+		{ key: 'hotjar', title: 'Hotjar', settings: { site_id: '3712345' } },
+		{ key: 'tiktok-pixel', title: 'TikTok pixel', settings: { pixel_id: 'C4ABCDEF' } },
+		{ key: 'pinterest-tag', title: 'Pinterest tag', settings: { tag_id: '2612345678901' } },
+		{ key: 'snapchat-pixel', title: 'Snap pixel', settings: { pixel_id: '6abc82ca-4a3a-4391-98ba-0317a8471234' } },
+	]
+	const svc = new m.StoreService(async (url) => {
+		const path = new URL(String(url)).pathname
+		if (path === '/api/checkout') return Response.json({ data: { currency: 'INR', methods: [] } })
+		if (path === '/api/plugins') return Response.json({ data: plugins })
+		return Response.json({ data: [] })
+	})
+	const tags = (store) => ({
+		facebookPixel: store.plugins.facebookPixel,
+		microsoftClarity: store.plugins.microsoftClarity,
+		hotjar: store.plugins.hotjar,
+		tiktokPixel: store.plugins.tiktokPixel,
+		pinterestTag: store.plugins.pinterestTag,
+		snapchatPixel: store.plugins.snapchatPixel,
+	})
+	assert.deepEqual(tags(await svc.getStoreByIdOrDomain()), {
+		facebookPixel: { active: true, id: '1234567890' },
+		microsoftClarity: { active: true, id: 'abcd1234ef' },
+		hotjar: { active: true, id: '3712345' },
+		tiktokPixel: { active: true, id: 'C4ABCDEF' },
+		pinterestTag: { active: true, id: '2612345678901' },
+		snapchatPixel: { active: true, id: '6abc82ca-4a3a-4391-98ba-0317a8471234' },
+	})
+
+	// Off on the engine, each is off here, whatever the static record says,
+	// and carries no ID for a storefront to load by mistake.
+	m.clearStoreCache()
+	plugins = []
+	for (const [name, tag] of Object.entries(tags(await svc.getStoreByIdOrDomain()))) {
+		assert.deepEqual(tag, { active: false }, name)
+	}
+})
+
+test('Google Analytics, Tag Manager and Ads reach the storefront in the shape it reads, only while set', async () => {
+	m.clearStoreCache()
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test/', proxyPath: undefined, baseDomain: undefined })
+	m.setStaticStore(() => ({ id: 'from_config', name: 'Shop', plugins: { googleTagManager: { id: 'GTM-STATIC', active: true } } }))
+	let settings = { ga4_measurement_id: ' G-ABC123XYZ ', gtm_container_id: 'GTM-K9ZZ1', google_ads_id: 'AW-1234567890', conversion_label: 'AbC-dEf_1' }
+	const svc = new m.StoreService(async (url) => {
+		const path = new URL(String(url)).pathname
+		if (path === '/api/checkout') return Response.json({ data: { currency: 'INR', methods: [] } })
+		if (path === '/api/plugins') return Response.json({ data: settings ? [{ key: 'google-analytics', title: 'Google Analytics', settings }] : [] })
+		return Response.json({ data: [] })
+	})
+
+	assert.deepEqual((await svc.getStoreByIdOrDomain()).plugins.googleTagManager, {
+		active: true,
+		tags: ['G-ABC123XYZ', 'AW-1234567890', 'GTM-K9ZZ1'],
+		conversions: [{ event: 'purchase', label: 'AbC-dEf_1' }],
+	})
+
+	// GA4 alone: no Ads conversion to send.
+	m.clearStoreCache()
+	settings = { ga4_measurement_id: 'G-ABC123XYZ', gtm_container_id: '', google_ads_id: '', conversion_label: 'orphan' }
+	assert.deepEqual((await svc.getStoreByIdOrDomain()).plugins.googleTagManager, {
+		active: true,
+		tags: ['G-ABC123XYZ'],
+		conversions: [],
+	})
+
+	// The whole `send_to` Google Ads shows, pasted as the label, still names the conversion.
+	m.clearStoreCache()
+	settings = { ga4_measurement_id: '', gtm_container_id: '', google_ads_id: '', conversion_label: 'AW-1234567890/AbC-dEf_1' }
+	assert.deepEqual((await svc.getStoreByIdOrDomain()).plugins.googleTagManager, {
+		active: true,
+		tags: ['AW-1234567890'],
+		conversions: [{ event: 'purchase', label: 'AbC-dEf_1' }],
+	})
+
+	// Installed with nothing filled in, or not installed: off, with no ID to load by mistake,
+	// whatever the static record says.
+	for (const off of [{ ga4_measurement_id: ' ', gtm_container_id: '', google_ads_id: '' }, null]) {
+		m.clearStoreCache()
+		settings = off
+		assert.deepEqual((await svc.getStoreByIdOrDomain()).plugins.googleTagManager, { active: false })
+	}
+})
+
+test('a checkout from a browser where Meta’s pixel ran tells the engine so, and one without it does not', async () => {
+	const local = {
+		cart_id: 'cart_1',
+		gocommerce_cart_cart_1: JSON.stringify({ shippingAddress: { firstName: 'Asha', email: 'a@example.com', address_1: '1 MG Road', city: 'Pune', zip: '411001', countryCode: 'IN' } }),
+	}
+	globalThis.window = {
+		location: { origin: 'https://shop.test', pathname: '/checkout/payment', hostname: 'shop.test', href: 'https://shop.test/checkout/payment?email=a%40example.com' },
+		navigator: { userAgent: 'Mozilla/5.0 (Linux; Android 14) Mobile' },
+		fbq() {},
+		localStorage: {
+			getItem: (k) => local[k] ?? null,
+			setItem: (k, v) => {
+				local[k] = v
+			},
+			removeItem: (k) => {
+				delete local[k]
+			},
+		},
+	}
+	globalThis.document = { cookie: '_fbp=fb.1.1700000000000.1234567890; other=1; _fbc=fb.1.1700000000000.AbC' }
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: undefined, baseDomain: undefined })
+	const bodies = []
+	const order = { id: 1, number: 'GC-1', status: 'confirmed', payment_status: 'pending', payment_provider: 'cod', currency: 'INR',
+		total: { amount_minor: 1000, currency: 'INR' }, lines: [], address: {}, created_at: '', updated_at: '' }
+	const svc = new m.CheckoutService(async (url, init) => {
+		const path = new URL(String(url)).pathname
+		if (path === '/api/carts/cart_1') return Response.json({ data: { id: 'cart_1', email: 'a@example.com', lines: [], currency: 'INR' } })
+		if (path === '/api/checkout/cod') {
+			bodies.push(JSON.parse(init.body))
+			return Response.json({ data: { order, payment: { kind: 'none', provider: 'cod' } } })
+		}
+		return Response.json({ data: [] })
+	})
+	try {
+		await svc.checkoutCOD({ cartId: 'cart_1' })
+		assert.deepEqual(bodies[0].metadata, {
+			meta_capi: {
+				fbp: 'fb.1.1700000000000.1234567890',
+				fbc: 'fb.1.1700000000000.AbC',
+				client_user_agent: 'Mozilla/5.0 (Linux; Android 14) Mobile',
+				// The page without its query, which can carry the shopper's details.
+				event_source_url: 'https://shop.test/checkout/payment',
+			},
+		})
+
+		// The cookie from an earlier visit, but no pixel on this page: the
+		// shopper took the choice back, and the engine is told nothing.
+		delete globalThis.window.fbq
+		await svc.checkoutCOD({ cartId: 'cart_1' })
+		assert.equal(bodies[1].metadata, undefined)
+
+		// No _fbp: the pixel never ran here, refused or blocked.
+		globalThis.window.fbq = () => {}
+		globalThis.document.cookie = 'other=1'
+		await svc.checkoutCOD({ cartId: 'cart_1' })
+		assert.equal(bodies[2].metadata, undefined)
+	} finally {
+		delete globalThis.window
+		delete globalThis.document
+		m.BaseService.setCredentials({ apiUrl: undefined })
+	}
+})
+
+test('a retry after a failed checkout keeps its key and body, though the pixel started in between', async () => {
+	const local = {
+		cart_id: 'cart_2',
+		gocommerce_cart_cart_2: JSON.stringify({ shippingAddress: { firstName: 'Asha', email: 'a@example.com', address_1: '1 MG Road', city: 'Pune', zip: '411001', countryCode: 'IN' } }),
+	}
+	globalThis.window = {
+		location: { origin: 'https://shop.test', pathname: '/checkout/payment', hostname: 'shop.test' },
+		navigator: { userAgent: 'UA' },
+		localStorage: {
+			getItem: (k) => local[k] ?? null,
+			setItem: (k, v) => {
+				local[k] = v
+			},
+			removeItem: (k) => {
+				delete local[k]
+			},
+		},
+	}
+	globalThis.document = { cookie: '' }
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: undefined, baseDomain: undefined })
+	const sent = []
+	let fail = true
+	const order = { id: 2, number: 'GC-2', status: 'confirmed', payment_status: 'pending', payment_provider: 'cod', currency: 'INR',
+		total: { amount_minor: 1000, currency: 'INR' }, lines: [], address: {}, created_at: '', updated_at: '' }
+	const svc = new m.CheckoutService(async (url, init) => {
+		const path = new URL(String(url)).pathname
+		if (path === '/api/carts/cart_2') return Response.json({ data: { id: 'cart_2', email: 'a@example.com', lines: [], currency: 'INR' } })
+		if (path === '/api/checkout/cod') {
+			sent.push({ key: init.headers['Idempotency-Key'], body: JSON.stringify(init.body) })
+			if (fail) {
+				fail = false
+				return Response.json({ error: { code: 'internal', message: 'gateway timeout' } }, { status: 502 })
+			}
+			return Response.json({ data: { order, payment: { kind: 'none', provider: 'cod' } } })
+		}
+		return Response.json({ data: [] })
+	})
+	try {
+		// No pixel on the first attempt; the shopper accepts the banner before retrying.
+		await assert.rejects(svc.checkoutCOD({ cartId: 'cart_2' }))
+		globalThis.window.fbq = () => {}
+		globalThis.document.cookie = '_fbp=fb.1.1700000000000.42'
+		await svc.checkoutCOD({ cartId: 'cart_2' })
+		assert.equal(sent.length, 2)
+		assert.equal(sent[1].key, sent[0].key, 'the retry resumes the first attempt')
+		assert.equal(sent[1].body, sent[0].body, 'and sends exactly what it sent')
+	} finally {
+		delete globalThis.window
+		delete globalThis.document
+		m.BaseService.setCredentials({ apiUrl: undefined })
+	}
+})
+
+test('a checkout carries where the shopper came from, as the storefront recorded it, and nothing stale', async () => {
+	const now = Date.now()
+	const ago = (days) => new Date(now - days * 86400000).toISOString()
+	const local = {
+		cart_id: 'cart_3',
+		gocommerce_cart_cart_3: JSON.stringify({ shippingAddress: { firstName: 'Asha', email: 'a@example.com', address_1: '1 MG Road', city: 'Pune', zip: '411001', countryCode: 'IN' } }),
+		gc_attribution: JSON.stringify({
+			first: { utm_source: 'facebook', utm_medium: 'paid', utm_campaign: 'Launch', fbclid: 'IwAR1', at: ago(12) },
+			last: { utm_source: 'google', utm_medium: 'cpc', utm_campaign: 'Diwali', gclid: 'Cj0', referrer: 'www.google.com', at: ago(1), email: 'x@y.z' },
+		}),
+	}
+	globalThis.window = {
+		location: { origin: 'https://shop.test', pathname: '/checkout/payment', hostname: 'shop.test' },
+		navigator: { userAgent: 'UA' },
+		localStorage: {
+			getItem: (k) => local[k] ?? null,
+			setItem: (k, v) => {
+				local[k] = v
+			},
+			removeItem: (k) => {
+				delete local[k]
+			},
+		},
+	}
+	globalThis.document = { cookie: '' }
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: undefined, baseDomain: undefined })
+	const bodies = []
+	const order = { id: 3, number: 'GC-3', status: 'confirmed', payment_status: 'pending', payment_provider: 'cod', currency: 'INR',
+		total: { amount_minor: 1000, currency: 'INR' }, lines: [], address: {}, created_at: '', updated_at: '' }
+	const svc = new m.CheckoutService(async (url, init) => {
+		const path = new URL(String(url)).pathname
+		if (path === '/api/carts/cart_3') return Response.json({ data: { id: 'cart_3', email: 'a@example.com', lines: [], currency: 'INR' } })
+		if (path === '/api/checkout/cod') {
+			bodies.push(JSON.parse(init.body))
+			return Response.json({ data: { order, payment: { kind: 'none', provider: 'cod' } } })
+		}
+		return Response.json({ data: [] })
+	})
+	try {
+		await svc.checkoutCOD({ cartId: 'cart_3' })
+		assert.deepEqual(bodies[0].metadata, {
+			attribution: {
+				first: { utm_source: 'facebook', utm_medium: 'paid', utm_campaign: 'Launch', fbclid: 'IwAR1', at: ago(12) },
+				// Only the names the engine reads travel; anything else in storage stays there.
+				last: { utm_source: 'google', utm_medium: 'cpc', utm_campaign: 'Diwali', gclid: 'Cj0', referrer: 'www.google.com', at: ago(1) },
+			},
+		})
+
+		// A first visit older than 30 days is forgotten, and the last one, still fresh, is the first
+		// visit in the window too. A visit naming no source, or dated in the future, is none.
+		local.gc_attribution = JSON.stringify({ first: { utm_source: 'old', at: ago(31) }, last: { utm_source: 'google', at: ago(2) } })
+		await svc.checkoutCOD({ cartId: 'cart_3' })
+		const google = { utm_source: 'google', at: ago(2) }
+		assert.deepEqual(bodies[1].metadata, { attribution: { first: google, last: google } })
+		local.gc_attribution = JSON.stringify({ first: { at: ago(1) }, last: { utm_source: 'x', at: ago(-5) } })
+		await svc.checkoutCOD({ cartId: 'cart_3' })
+		assert.equal(bodies[2].metadata, undefined)
+
+		// Nothing recorded, or nothing readable: no attribution at all.
+		local.gc_attribution = '{not json'
+		await svc.checkoutCOD({ cartId: 'cart_3' })
+		assert.equal(bodies[3].metadata, undefined)
+	} finally {
+		delete globalThis.window
+		delete globalThis.document
+		m.BaseService.setCredentials({ apiUrl: undefined })
+	}
 })

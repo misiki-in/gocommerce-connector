@@ -47,7 +47,8 @@ Each is optional. Without `-identity` there is no sign-in (guest checkout
 always works); without `-reviews` products show no stars; and so on. Add
 `-meilisearch` (with `MEILI_HOST` and keys) for typo-tolerant search once a store
 switches the Meilisearch plugin on,
-`-newsletter` and `-contact` for the signup box and contact form, and `-b2b` for
+`-newsletter` and `-contact` for the signup box and contact form,
+`-whatsapp` for WhatsApp order updates, and `-b2b` for
 business buyers (see "Beyond the storefront's screens").
 
 ### The browser and CORS
@@ -142,6 +143,7 @@ down stays best-effort: the storefront renders from its static record.
 | PIN code autofill | `/api/postcodes/IN/{pin}` — `addressService.lookupPostcode({ country, postcode })`: city and state, or null when the engine has no directory or the PIN is unknown (D134) |
 | wishlist | `/x/wishlist` |
 | reviews | `/x/reviews` |
+| Google reviews | `/x/google-reviews/place` — `googleReviewService.place()`: the store's Google rating, rating count and up to five Google reviews with their authors' names, photos and profile links, read live on every call because Google's terms forbid keeping them (call it when the section is in view; each call is billed to the store's Google key). Null while ext/google-reviews or its `show_place` switch is off, when the place has no ratings, when the day's lookups are spent (429) or Google refuses (502). `/x/google-reviews/survey/{number}` — `googleReviewService.survey(number)`: Google Customer Reviews' opt-in fields, built by the engine from an order placed in this browser, read with its access token; null for any other order or while `customer_reviews` is off |
 | content pages (`/p/…`, legal pages) | `/x/cms/pages` |
 | FAQ | `/x/faq` |
 | composed home page | `/x/layouts/home` (`?preview=` for a draft) — `layoutService.getHomeLayout()`, null when the store has none; carries `themeSettings` and each collection list's `collections` |
@@ -152,9 +154,10 @@ down stays best-effort: the storefront renders from its static record.
 | product specs table | the product's category attribute answers |
 | attribute filters (`?attributes.color=Red`) | `/api/products?attr=color:Red` |
 | newsletter box | `/x/newsletter/subscribe` |
+| WhatsApp order updates at checkout | `/x/notify-whatsapp/consent` — `whatsappService.consentOffer()`: `{ enabled, marketing }`, whether to show the order-updates box and the offers-and-reminders box; both false when ext/notify-whatsapp is not in the engine or does not answer, so checkout never waits on it. `whatsappService.setConsent({ cartId, phone, orderUpdates, marketing })` (PUT) records both answers for the phone, an unticked box as `false`; with `marketing` the engine keeps the phone on the bag for basket reminders. It throws the engine's 400 (`validation_failed`) when the phone is not a WhatsApp number for the store's country |
 | contact form, product enquiries | `/x/contact/messages`, with the form's hidden `website` honeypot passed on so the engine drops what a bot filled in |
 | search words, type-ahead (plugin on) | `/x/meilisearch/search`, falling back to the engine's own search when it is off or down |
-| store record | the storefront's own config, with the engine's currency, menus and module switches over it; the store's own logo, dark logo and icon (`logo_url`, `logo_dark_url`, `icon_url` from `/api/store`, D148) replace `logo`, `logoDark` and `favicon` when it has them; for the contact page (D156), the address once the store shows it (as `address: { street, city, state, pincode, country }`), `mapLocation` and `openingHours` when set, `businessCountry` (the store's ISO country, for the phone's country code), the `whatsapp-chat` plugin's number as `plugins.whatsappChatButton`, and the `criteo` plugin's account as `plugins.criteo: { active, accountId }` (the engine decides, never the static record) |
+| store record | the storefront's own config, with the engine's currency, menus and module switches over it; the store's own logo, dark logo and icon (`logo_url`, `logo_dark_url`, `icon_url` from `/api/store`, D148) replace `logo`, `logoDark` and `favicon` when it has them; for the contact page (D156), the address once the store shows it (as `address: { street, city, state, pincode, country }`), `mapLocation` and `openingHours` when set, `businessCountry` (the store's ISO country, for the phone's country code), the `whatsapp-chat` plugin's number as `plugins.whatsappChatButton`, the `criteo` plugin's account as `plugins.criteo: { active, accountId }` (the engine decides, never the static record), and Google Customer Reviews (ext/google-reviews) as `plugins.googleReviewsOptIn` (`active` while the survey is on) and `plugins.googleStoreWidget` (`{ active, position: 'RIGHT_BOTTOM' \| 'LEFT_BOTTOM' }`, off without the survey) |
 | resized product pictures | `/images/{store}/cdn-cgi/image/width=…/…` — the store record's `plugins.imageCdn` is turned on with provider `cloudflare` and the engine's `images_path` (from `/api/store`, D139) after `PUBLIC_GOCOMMERCE_API_URL`, so the storefront's srcset asks the engine for each width; an engine without it leaves the static record's setting |
 
 Blogs, banners, reels, chat, warranties, deals and uploads have no engine

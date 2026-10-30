@@ -4,6 +4,8 @@ import { toEngineAddress, toOrder } from '../map'
 import { minorToMajor } from '../money'
 import {
 	cartExtras,
+	landingAttribution,
+	metaBrowser,
 	placedOrderByReference,
 	rememberOrder,
 	saveCartExtras,
@@ -256,12 +258,27 @@ export class CheckoutService extends BaseService {
 			...extra,
 		}
 		const serialised = JSON.stringify(body)
-		const key = extras.attempt?.body === `${code}:${serialised}` ? extras.attempt.key : newKey()
-		saveCartExtras(id, { attempt: { key, body: `${code}:${serialised}` } })
+		const retry = extras.attempt?.body === `${code}:${serialised}`
+		const key = retry ? extras.attempt!.key : newKey()
+		// Where Meta's pixel ran (metaBrowser) is not part of what makes a retry the same
+		// request: the shopper can accept the cookie banner, or Meta set _fbc, between a failed
+		// attempt and the next. A retry sends the first attempt's, since the engine refuses a key
+		// replayed with a different body.
+		const meta = retry ? extras.attempt?.meta : metaBrowser()
+		// Where the shopper came from (D168), held the same way: a retry sends what the first attempt did.
+		const attribution = retry ? extras.attempt?.attribution : landingAttribution()
+		saveCartExtras(id, {
+			attempt: { key, body: `${code}:${serialised}`, ...(meta ? { meta } : {}), ...(attribution ? { attribution } : {}) },
+		})
+		const metadata = {
+			...extra.metadata,
+			...(meta ? { meta_capi: meta } : {}),
+			...(attribution ? { attribution } : {}),
+		}
 
 		const result = await this.data<CheckoutResult>(`/api/checkout/${encodeURIComponent(code)}`, {
 			method: 'POST',
-			body,
+			body: Object.keys(metadata).length ? { ...body, metadata } : body,
 			headers: { 'Idempotency-Key': key },
 		})
 
