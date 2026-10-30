@@ -468,6 +468,8 @@ test('every service the storefront imports by name is exported', () => {
 		'reviewService',
 		'googleReviewService',
 		'GoogleReviewService',
+		'customizerService',
+		'CustomizerService',
 		'storeService',
 		'menuService',
 		'pageService',
@@ -2196,4 +2198,232 @@ test('a retry after a failed checkout keeps its key and body, though the pixel s
 		delete globalThis.document
 		m.BaseService.setCredentials({ apiUrl: undefined })
 	}
+})
+
+const customizerSetup = {
+	product_id: 41,
+	mockup: { url: '/media/stores/s1/mock.png', width: 1000, height: 2000 },
+	overlay_url: '/media/stores/s1/over.png',
+	print_area: { x: 100, y: 100, width: 800, height: 1600, radius: 80 },
+	print_size: { width_mm: 75, height_mm: 150, dpi: 300 },
+	tools: { upload: true, text: true, shapes: true, background: true, stickers: true },
+	fonts: [{ key: 'inter', family: 'Inter' }, { key: 'poppins', family: 'Poppins' }],
+	stickers: [{ id: 7, url: '/media/stores/s1/heart.png', width: 256, height: 256 }],
+	min_photo_px: 1000,
+	consent: 'Your photo is used only to print your order.',
+}
+
+const refused = (status) => () => Response.json({ error: { code: 'x', message: `refused ${status}` } }, { status })
+
+function customizerEngine(plugins, answers, seen) {
+	return async (url, init) => {
+		const u = new URL(String(url))
+		const route = `${init?.method ?? 'GET'} ${u.pathname}`
+		seen?.push([route, init])
+		const answer = u.pathname === '/api/plugins' ? plugins : answers[route]
+		if (typeof answer === 'function') return answer()
+		if (answer) return Response.json({ data: answer }, { status: init?.method === 'POST' ? 201 : 200 })
+		return Response.json({ error: { code: 'not_found', message: 'this product cannot be designed here' } }, { status: 404 })
+	}
+}
+
+const customizerOn = [{ key: 'customizer', title: 'Product customizer', settings: {} }]
+
+const withProxy = async (fn) => {
+	m.clearStoreCache()
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: '/engine', baseDomain: undefined })
+	try {
+		return await fn()
+	} finally {
+		m.BaseService.setCredentials({ proxyPath: undefined })
+	}
+}
+
+test("a product's editor arrives camelCased, every picture loaded through the proxy", async () => {
+	await withProxy(async () => {
+		const seen = []
+		const svc = new m.CustomizerService(
+			customizerEngine(customizerOn, { 'GET /x/customizer/products/41': customizerSetup }, seen),
+		)
+		assert.deepEqual(await svc.setup('41'), {
+			productId: '41',
+			mockup: { url: '/engine/media/stores/s1/mock.png', width: 1000, height: 2000 },
+			overlayUrl: '/engine/media/stores/s1/over.png',
+			printArea: { x: 100, y: 100, width: 800, height: 1600, radius: 80 },
+			printSize: { widthMm: 75, heightMm: 150, dpi: 300 },
+			tools: { upload: true, text: true, shapes: true, background: true, stickers: true },
+			fonts: [{ key: 'inter', family: 'Inter' }, { key: 'poppins', family: 'Poppins' }],
+			stickers: [{ id: 7, url: '/engine/media/stores/s1/heart.png', width: 256, height: 256 }],
+			minPhotoPx: 1000,
+			consent: 'Your photo is used only to print your order.',
+		})
+		assert.deepEqual(seen.map(([route]) => route), ['GET /api/plugins', 'GET /x/customizer/products/41'])
+
+		m.clearStoreCache()
+		const plain = new m.CustomizerService(
+			customizerEngine(customizerOn, { 'GET /x/customizer/products/41': { ...customizerSetup, overlay_url: null } }),
+		)
+		assert.equal((await plain.setup(41)).overlayUrl, null)
+	})
+})
+
+test('a product with no editor is null, and with the plugin off no product is asked about', async () => {
+	await withProxy(async () => {
+		const seen = []
+		const svc = new m.CustomizerService(customizerEngine(customizerOn, {}, seen))
+		assert.equal(await svc.setup(42), null)
+		assert.deepEqual(seen.map(([route]) => route), ['GET /api/plugins', 'GET /x/customizer/products/42'])
+
+		m.clearStoreCache()
+		const broken = new m.CustomizerService(customizerEngine(customizerOn, { 'GET /x/customizer/products/41': refused(500) }))
+		assert.equal(await broken.setup(41), null, 'the page draws without the editor')
+
+		m.clearStoreCache()
+		const asked = []
+		const off = new m.CustomizerService(
+			customizerEngine([], { 'GET /x/customizer/products/41': customizerSetup }, asked),
+		)
+		assert.equal(await off.setup(41), null)
+		assert.deepEqual(asked.map(([route]) => route), ['GET /api/plugins'])
+
+		m.clearStoreCache()
+		const unread = new m.CustomizerService(customizerEngine(refused(503), { 'GET /x/customizer/products/41': customizerSetup }))
+		assert.equal((await unread.setup(41)).productId, '41', 'a plugin list that could not be read hides nothing')
+	})
+})
+
+test('a photo is uploaded as the multipart field "file", with the boundary left to fetch', async () => {
+	await withProxy(async () => {
+		const seen = []
+		const svc = new m.CustomizerService(
+			customizerEngine(customizerOn, {
+				'POST /x/customizer/uploads': { upload_id: 'up_1', url: '/media/stores/s1/up_1.jpg', width: 3000, height: 4000 },
+			}, seen),
+		)
+		const photo = new Blob([new Uint8Array([0xff, 0xd8, 0xff])], { type: 'image/jpeg' })
+		assert.deepEqual(await svc.upload(photo, 'asha.jpg'), {
+			uploadId: 'up_1',
+			url: '/engine/media/stores/s1/up_1.jpg',
+			width: 3000,
+			height: 4000,
+		})
+		const [[route, init]] = seen
+		assert.equal(route, 'POST /x/customizer/uploads')
+		assert.equal(init.headers['Content-Type'], undefined)
+		const file = init.body.get('file')
+		assert.equal(file.name, 'asha.jpg')
+		assert.deepEqual([...new Uint8Array(await file.arrayBuffer())], [0xff, 0xd8, 0xff])
+		const wire = new Request('http://engine.test/x/customizer/uploads', init)
+		assert.match(wire.headers.get('content-type'), /^multipart\/form-data; boundary=/)
+
+		const unsupported = new m.CustomizerService(customizerEngine(customizerOn, { 'POST /x/customizer/uploads': refused(415) }))
+		await assert.rejects(
+			unsupported.upload(photo),
+			(err) => err instanceof m.GoCommerceError && err.status === 415 && err.message === 'refused 415',
+		)
+	})
+})
+
+test('a design is saved with its document exactly as the editor wrote it', async () => {
+	await withProxy(async () => {
+		const seen = []
+		const svc = new m.CustomizerService(
+			customizerEngine(customizerOn, {
+				'POST /x/customizer/designs': { design_id: 'des_1', preview_url: '/media/stores/s1/prev.png' },
+			}, seen),
+		)
+		const document = {
+			version: 1,
+			background: '#f4e1d2',
+			layers: [
+				{ id: 'p1', type: 'image', x: -40, y: 0, width: 880, height: 1600, rotation: 0, opacity: 1, upload_id: 'up_1' },
+				{ id: 't1', type: 'text', x: 100, y: 1400, width: 600, height: 120, rotation: -4, opacity: 1,
+					text: 'Asha', font: 'poppins', color: '#ffffff', font_size: 96, align: 'center' },
+				{ id: 'k1', type: 'sticker', x: 600, y: 80, width: 160, height: 160, rotation: 12, opacity: 1, sticker_media_id: 7 },
+			],
+		}
+		const saved = await svc.saveDesign({
+			productId: '41',
+			variantId: '97',
+			previewUploadId: 'up_prev',
+			printUploadId: 'up_print',
+			document,
+		})
+		assert.deepEqual(saved, { designId: 'des_1', previewUrl: '/engine/media/stores/s1/prev.png' })
+		const [[route, init]] = seen
+		assert.equal(route, 'POST /x/customizer/designs')
+		assert.equal(init.headers['Content-Type'], 'application/json')
+		assert.deepEqual(JSON.parse(init.body), {
+			product_id: 41,
+			variant_id: 97,
+			preview_upload_id: 'up_prev',
+			print_upload_id: 'up_print',
+			document,
+		})
+	})
+})
+
+test('a design goes into the bag beside its variant, on the retry to a fresh cart too', async () => {
+	await withCart(async () => {
+		m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: undefined, baseDomain: undefined })
+		const posts = []
+		let checkedOut = false
+		const svc = new m.CartService(async (url, init) => {
+			const path = new URL(String(url)).pathname
+			if (init?.method === 'POST') posts.push([path, init.body && JSON.parse(init.body)])
+			if (path === '/api/carts') return Response.json({ data: { id: 'cart2', status: 'open', currency: 'INR', line_items: [] } })
+			if (path.endsWith('/line-items')) {
+				if (checkedOut && path === '/api/carts/cart1/line-items')
+					return Response.json({ error: { code: 'conflict', message: 'this cart has already been checked out' } }, { status: 409 })
+				const id = path.split('/')[3]
+				return Response.json({ data: { id, status: 'open', currency: 'INR', item_count: 1, subtotal: money(4900, 'INR'),
+					line_items: [cartLine({ variant_id: 97, design_id: 'des_1', design_preview_url: '/media/stores/s1/prev.png' })] } })
+			}
+			return Response.json({ error: { code: 'not_found', message: 'no' } }, { status: 404 })
+		})
+		const cart = await svc.addToCart({ variantId: '97', designId: 'des_1' })
+		assert.equal(cart.lineItems[0].designId, 'des_1')
+		assert.deepEqual(posts, [['/api/carts/cart1/line-items', { variant_id: 97, quantity: 1, design_id: 'des_1' }]])
+
+		posts.length = 0
+		checkedOut = true
+		await svc.addToCart({ variantId: '97', designId: 'des_1' })
+		assert.deepEqual(posts, [
+			['/api/carts/cart1/line-items', { variant_id: 97, quantity: 1, design_id: 'des_1' }],
+			['/api/carts', undefined],
+			['/api/carts/cart2/line-items', { variant_id: 97, quantity: 1, design_id: 'des_1' }],
+		])
+
+		posts.length = 0
+		checkedOut = false
+		await svc.addToCart({ variantId: '97' })
+		assert.deepEqual(posts, [['/api/carts/cart1/line-items', { variant_id: 97, quantity: 1 }]])
+	})
+})
+
+test('a designed line, in the bag and on the order, carries its design and its picture through the proxy', async () => {
+	await withProxy(async () => {
+		const bagged = m.toCartLine(cartLine({ design_id: 'des_1', design_preview_url: '/media/stores/s1/prev.png' }))
+		assert.deepEqual([bagged.designId, bagged.designPreview], ['des_1', '/engine/media/stores/s1/prev.png'])
+		const plainLine = m.toCartLine(cartLine())
+		assert.deepEqual([plainLine.designId, plainLine.designPreview], [null, null])
+
+		const line = (over) => ({ id: 1, product_id: 41, variant_id: 97, sku: 'CASE', title: 'Phone case', quantity: 1,
+			shipped_quantity: 0, unit_price: money(49900, 'INR'), total: money(49900, 'INR'), ...over })
+		const o = m.toOrder({
+			id: 9, number: 'GC-000009', status: 'confirmed', payment_status: 'paid', payment_provider: 'razorpay', currency: 'INR',
+			subtotal: money(99800, 'INR'), shipping: money(0, 'INR'), discount: money(0, 'INR'), tax: money(0, 'INR'),
+			tax_inclusive: true, total: money(99800, 'INR'), refunded: money(0, 'INR'), email: 'a@example.com',
+			address: { name: 'Asha', line1: '1 MG Road', city: 'Pune', postal_code: '411001', country: 'IN' },
+			line_items: [
+				line({ metadata: { design: { id: 'des_1', preview_url: '/media/stores/s1/prev.png', print_url: '/media/stores/s1/print.png' } } }),
+				line({ id: 2 }),
+			],
+			fulfillments: null, created_at: '2026-10-30T00:00:00Z', updated_at: '2026-10-30T00:00:00Z',
+		})
+		assert.deepEqual(
+			o.lineItems.map((l) => [l.designId, l.designPreview]),
+			[['des_1', '/engine/media/stores/s1/prev.png'], [null, null]],
+		)
+	})
 })
