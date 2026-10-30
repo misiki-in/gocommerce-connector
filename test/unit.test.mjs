@@ -511,6 +511,8 @@ test('every service the storefront imports by name is exported', () => {
 		'varniCustomDesignService',
 		'varniCustomProductService',
 		'autocompleteService',
+		'whatsappService',
+		'WhatsappService',
 	]) {
 		assert.ok(m[name] !== undefined, `${name} is exported`)
 	}
@@ -519,6 +521,78 @@ test('every service the storefront imports by name is exported', () => {
 	assert.equal(typeof m.setStaticStore, 'function')
 	assert.equal(typeof m.serveRestLocally, 'function')
 	assert.equal(typeof m.searchService.emptyResult().data.length, 'number', 'emptyResult is synchronous')
+})
+
+test('checkout offers the WhatsApp boxes the store has, and none when the engine cannot say', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: undefined, baseDomain: undefined })
+	const answering = (status, body) => new m.WhatsappService(async () => Response.json(body, { status }))
+	assert.deepEqual(await answering(200, { data: { enabled: true, marketing: true } }).consentOffer(), {
+		enabled: true,
+		marketing: true,
+	})
+	assert.deepEqual(await answering(200, { data: { enabled: true, marketing: false } }).consentOffer(), {
+		enabled: true,
+		marketing: false,
+	})
+	// Marketing alone is not an offer: there is no order-update box to sit under.
+	assert.deepEqual(await answering(200, { data: { enabled: false, marketing: true } }).consentOffer(), {
+		enabled: false,
+		marketing: false,
+	})
+	for (const [status, body] of [
+		[404, { error: { code: 'not_found', message: 'no route for GET /x/notify-whatsapp/consent' } }],
+		[500, { error: { code: 'internal', message: 'boom' } }],
+	]) {
+		assert.deepEqual(await answering(status, body).consentOffer(), { enabled: false, marketing: false })
+	}
+	const down = new m.WhatsappService(async () => {
+		throw new TypeError('fetch failed')
+	})
+	assert.deepEqual(await down.consentOffer(), { enabled: false, marketing: false })
+})
+
+test('a WhatsApp answer is sent for the bag with both boxes, unticked as false', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: undefined, baseDomain: undefined })
+	globalThis.window = {
+		location: { origin: 'http://storefront.test', hostname: 'storefront.test' },
+		localStorage: { getItem: (k) => (k === 'cart_id' ? 'cart_tok' : null), setItem() {}, removeItem() {} },
+	}
+	globalThis.document = { cookie: '' }
+	const sent = []
+	const svc = new m.WhatsappService(async (url, init) => {
+		sent.push({ url: String(url), method: init?.method, body: JSON.parse(init.body) })
+		const b = JSON.parse(init.body)
+		if (b.phone === '12') {
+			return Response.json({ error: { code: 'invalid', message: 'not a WhatsApp number' } }, { status: 422 })
+		}
+		return Response.json({ data: { phone: '+919876543210', order_updates: b.order_updates, marketing: b.marketing } })
+	})
+	try {
+		assert.deepEqual(
+			await svc.setConsent({ cartId: 'cart_abc', phone: ' 98765 43210 ', orderUpdates: true, marketing: false }),
+			{ phone: '+919876543210', orderUpdates: true, marketing: false },
+		)
+		await svc.setConsent({ phone: '9876543210', orderUpdates: false, marketing: false })
+		assert.deepEqual(sent, [
+			{
+				url: 'http://engine.test/x/notify-whatsapp/consent',
+				method: 'PUT',
+				body: { cart_id: 'cart_abc', phone: '98765 43210', order_updates: true, marketing: false },
+			},
+			{
+				url: 'http://engine.test/x/notify-whatsapp/consent',
+				method: 'PUT',
+				body: { cart_id: 'cart_tok', phone: '9876543210', order_updates: false, marketing: false },
+			},
+		])
+		await assert.rejects(
+			svc.setConsent({ phone: '12', orderUpdates: true, marketing: false }),
+			(err) => err instanceof m.GoCommerceError && err.status === 422 && /WhatsApp number/.test(err.message),
+		)
+	} finally {
+		delete globalThis.window
+		delete globalThis.document
+	}
 })
 
 test('credentials merge, so an unset variable does not erase a set one', () => {
