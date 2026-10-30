@@ -4,6 +4,7 @@ import { toEngineAddress, toOrder } from '../map'
 import { minorToMajor } from '../money'
 import {
 	cartExtras,
+	landingAttribution,
 	metaBrowser,
 	placedOrderByReference,
 	rememberOrder,
@@ -264,11 +265,20 @@ export class CheckoutService extends BaseService {
 		// attempt and the next. A retry sends the first attempt's, since the engine refuses a key
 		// replayed with a different body.
 		const meta = retry ? extras.attempt?.meta : metaBrowser()
-		saveCartExtras(id, { attempt: { key, body: `${code}:${serialised}`, ...(meta ? { meta } : {}) } })
+		// Where the shopper came from (D168), held the same way: a retry sends what the first attempt did.
+		const attribution = retry ? extras.attempt?.attribution : landingAttribution()
+		saveCartExtras(id, {
+			attempt: { key, body: `${code}:${serialised}`, ...(meta ? { meta } : {}), ...(attribution ? { attribution } : {}) },
+		})
+		const metadata = {
+			...extra.metadata,
+			...(meta ? { meta_capi: meta } : {}),
+			...(attribution ? { attribution } : {}),
+		}
 
 		const result = await this.data<CheckoutResult>(`/api/checkout/${encodeURIComponent(code)}`, {
 			method: 'POST',
-			body: meta ? { ...body, metadata: { ...extra.metadata, meta_capi: meta } } : body,
+			body: Object.keys(metadata).length ? { ...body, metadata } : body,
 			headers: { 'Idempotency-Key': key },
 		})
 
