@@ -168,6 +168,14 @@ export class StoreService extends BaseService {
 							}
 						: {}),
 				},
+				// Criteo's OneTag, for this store's own account. The engine decides: on a shared
+				// deployment the static record is every store's, and one store's account must
+				// never load on another's pages.
+				criteo: {
+					...basePlugins.criteo,
+					...flag(plugins.has('criteo')),
+					...(plugins.has('criteo') ? { accountId: String(plugins.get('criteo')?.settings?.account_id ?? '') } : {}),
+				},
 				isProductReviewsAndRatings: {
 					...basePlugins.isProductReviewsAndRatings,
 					...flag(plugins.has('product-reviews')),

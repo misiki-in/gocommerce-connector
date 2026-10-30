@@ -2102,6 +2102,27 @@ test('a contact page gets the address, map, hours and WhatsApp number the store 
 	assert.equal(quiet.plugins.whatsappChatButton.phone, undefined)
 })
 
+test("Criteo loads with the store's own account, and only when the store switched it on", async () => {
+	m.clearStoreCache()
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test/', proxyPath: undefined, baseDomain: undefined })
+	// A shared deployment's static record is every store's: it must not switch Criteo on.
+	m.setStaticStore(() => ({ id: 'from_config', name: 'Shop', plugins: { criteo: { active: true, accountId: '111' } } }))
+	let plugins = [{ key: 'criteo', title: 'Criteo', settings: { account_id: '67357' } }]
+	const svc = new m.StoreService(async (url) => {
+		const path = new URL(String(url)).pathname
+		if (path === '/api/checkout') return Response.json({ data: { currency: 'INR', methods: [] } })
+		if (path === '/api/plugins') return Response.json({ data: plugins })
+		return Response.json({ data: [] })
+	})
+	const store = await svc.getStoreByIdOrDomain()
+	assert.deepEqual(store.plugins.criteo, { active: true, accountId: '67357' })
+
+	m.clearStoreCache()
+	plugins = []
+	const off = await svc.getStoreByIdOrDomain()
+	assert.equal(off.plugins.criteo.active, false)
+})
+
 test('the contact form sends the honeypot, so the engine is the one that drops a bot', async () => {
 	m.BaseService.setCredentials({ apiUrl: 'http://engine.test/', proxyPath: undefined, baseDomain: undefined })
 	const sent = []
