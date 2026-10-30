@@ -172,6 +172,14 @@ export class StoreService extends BaseService {
 					...basePlugins.isProductReviewsAndRatings,
 					...flag(plugins.has('product-reviews')),
 				},
+				// Google Customer Reviews (ext/google-reviews): the confirmation page's survey offer,
+				// whose fields the engine builds from the order, and Google's store widget, which
+				// belongs to the same programme and so needs the survey on.
+				googleReviewsOptIn: {
+					...basePlugins.googleReviewsOptIn,
+					...flag(googleSetting(plugins, 'customer_reviews') === true),
+				},
+				googleStoreWidget: storeWidget(plugins),
 				// The footer's sign-up box posts to ext/newsletter, and the theme editor's footer
 				// switch (D131) can only show it while that is on.
 				newsletter: { ...basePlugins.newsletter, ...flag(plugins.has('newsletter')) },
@@ -232,6 +240,16 @@ function regionName(code: string): string {
 	} catch {
 		return code
 	}
+}
+
+const googleSetting = (plugins: Map<string, { settings?: Record<string, unknown> }>, key: string) =>
+	plugins.get('google-reviews')?.settings?.[key]
+
+/** Google's store widget, where the store placed it; off without the survey. */
+function storeWidget(plugins: Map<string, { settings?: Record<string, unknown> }>) {
+	const where = googleSetting(plugins, 'store_widget')
+	if (googleSetting(plugins, 'customer_reviews') !== true || !where) return { active: false }
+	return { active: true, position: where === 'Bottom left' ? 'LEFT_BOTTOM' : 'RIGHT_BOTTOM' }
 }
 
 /** The sign-in form's names for the store's choice (D116, D118). */

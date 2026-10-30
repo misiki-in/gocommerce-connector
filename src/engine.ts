@@ -291,6 +291,34 @@ export type ShippingRate = { rate_id: number; name: string; price: Money; zone_i
 
 export type Plugin = { key: string; title: string; settings: Record<string, unknown> }
 
+/** `GET /x/google-reviews/place` (ext/google-reviews): Google's answer just now, never stored. */
+export type GooglePlace = {
+	rating: number
+	user_rating_count: number
+	google_maps_uri: string
+	reviews: {
+		author: { name: string; uri?: string; photo_uri?: string }
+		rating: number
+		text?: string
+		language?: string
+		relative_time?: string
+		publish_time?: string
+		visit_date?: string
+		google_maps_uri?: string
+		flag_uri?: string
+	}[]
+}
+
+/** `GET /x/google-reviews/survey/{number}`: Google Customer Reviews' opt-in fields, from the order. */
+export type GoogleSurvey = {
+	merchant_id: number
+	order_id: string
+	email: string
+	delivery_country: string
+	estimated_delivery_date: string
+	opt_in_style?: string
+}
+
 /** `GET /api/store`: what anyone may read about the shop. */
 export type StoreProfile = {
 	name: string
