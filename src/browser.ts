@@ -176,6 +176,60 @@ export function metaBrowser(): Record<string, string> | undefined {
 	}
 }
 
+// ------------------------------------------------------------- attribution
+
+/**
+ * Where the shopper came from, as the storefront recorded it on arrival: the first visit with a
+ * source in the last 30 days and the latest, under `gc_attribution` in this browser's storage.
+ * The storefront writes it only with the shopper's leave for analytics, and it goes nowhere but
+ * the store's own checkout (GoCommerce D168).
+ *
+ * Only the names the engine reads are passed on, each a short string, and a visit older than 30
+ * days is dropped here as well as there, so a tab left open for a month does not credit an old ad.
+ */
+export const ATTRIBUTION_KEY = 'gc_attribution'
+const ATTRIBUTION_DAYS = 30
+const TOUCH_FIELDS = [
+	'utm_source',
+	'utm_medium',
+	'utm_campaign',
+	'utm_content',
+	'utm_term',
+	'gclid',
+	'gbraid',
+	'wbraid',
+	'fbclid',
+	'ttclid',
+	'msclkid',
+	'referrer',
+	'at',
+] as const
+
+type Touch = Partial<Record<(typeof TOUCH_FIELDS)[number], string>>
+
+function cleanTouch(raw: unknown, now: number): Touch | undefined {
+	if (!raw || typeof raw !== 'object') return undefined
+	const at = Date.parse(String((raw as Touch).at ?? ''))
+	// A date ahead of this clock by more than a day would never expire.
+	if (!Number.isFinite(at) || now - at > ATTRIBUTION_DAYS * 86_400_000 || at - now > 86_400_000) return undefined
+	const out: Touch = {}
+	for (const k of TOUCH_FIELDS) {
+		const v = (raw as Record<string, unknown>)[k]
+		if (typeof v === 'string' && v.trim()) out[k] = v.trim().slice(0, 200)
+	}
+	// A visit naming no source is none.
+	return Object.keys(out).length > 1 ? out : undefined
+}
+
+export function landingAttribution(now = Date.now()): { first?: Touch; last?: Touch } | undefined {
+	const saved = readJSON<{ first?: unknown; last?: unknown }>(ATTRIBUTION_KEY)
+	const last = cleanTouch(saved?.last, now)
+	// A stale first visit leaves the last one as the first in the window.
+	const first = cleanTouch(saved?.first, now) ?? last
+	if (!first && !last) return undefined
+	return { ...(first ? { first } : {}), ...(last ? { last } : {}) }
+}
+
 // ---------------------------------------------------------------- cart
 
 /** `localStorage.cart_id`, the storefront's own key, with its stale spellings refused. */
@@ -216,7 +270,7 @@ export type CartExtras = {
 	 * The Idempotency-Key of the last checkout attempt, the body it was sent with, and where
 	 * Meta's pixel ran then, which a retry sends again unchanged.
 	 */
-	attempt?: { key: string; body: string; meta?: Record<string, string> } | null
+	attempt?: { key: string; body: string; meta?: Record<string, string>; attribution?: Record<string, unknown> } | null
 }
 
 const extrasKey = (cartId: string) => `gocommerce_cart_${cartId}`

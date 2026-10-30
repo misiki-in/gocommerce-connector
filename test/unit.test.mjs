@@ -513,6 +513,8 @@ test('every service the storefront imports by name is exported', () => {
 		'varniCustomDesignService',
 		'varniCustomProductService',
 		'autocompleteService',
+		'whatsappService',
+		'WhatsappService',
 	]) {
 		assert.ok(m[name] !== undefined, `${name} is exported`)
 	}
@@ -521,6 +523,81 @@ test('every service the storefront imports by name is exported', () => {
 	assert.equal(typeof m.setStaticStore, 'function')
 	assert.equal(typeof m.serveRestLocally, 'function')
 	assert.equal(typeof m.searchService.emptyResult().data.length, 'number', 'emptyResult is synchronous')
+})
+
+test('checkout offers the WhatsApp boxes the store has, and none when the engine cannot say', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: undefined, baseDomain: undefined })
+	const answering = (status, body) => new m.WhatsappService(async () => Response.json(body, { status }))
+	assert.deepEqual(await answering(200, { data: { enabled: true, marketing: true } }).consentOffer(), {
+		enabled: true,
+		marketing: true,
+	})
+	assert.deepEqual(await answering(200, { data: { enabled: true, marketing: false } }).consentOffer(), {
+		enabled: true,
+		marketing: false,
+	})
+	// Marketing alone is not an offer: there is no order-update box to sit under.
+	assert.deepEqual(await answering(200, { data: { enabled: false, marketing: true } }).consentOffer(), {
+		enabled: false,
+		marketing: false,
+	})
+	for (const [status, body] of [
+		[404, { error: { code: 'not_found', message: 'no route for GET /x/notify-whatsapp/consent' } }],
+		[500, { error: { code: 'internal', message: 'boom' } }],
+	]) {
+		assert.deepEqual(await answering(status, body).consentOffer(), { enabled: false, marketing: false })
+	}
+	const down = new m.WhatsappService(async () => {
+		throw new TypeError('fetch failed')
+	})
+	assert.deepEqual(await down.consentOffer(), { enabled: false, marketing: false })
+})
+
+test('a WhatsApp answer is sent for the bag with both boxes, unticked as false', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: undefined, baseDomain: undefined })
+	globalThis.window = {
+		location: { origin: 'http://storefront.test', hostname: 'storefront.test' },
+		localStorage: { getItem: (k) => (k === 'cart_id' ? 'cart_tok' : null), setItem() {}, removeItem() {} },
+	}
+	globalThis.document = { cookie: '' }
+	const sent = []
+	const svc = new m.WhatsappService(async (url, init) => {
+		sent.push({ url: String(url), method: init?.method, body: JSON.parse(init.body) })
+		const b = JSON.parse(init.body)
+		if (b.phone === '12') {
+			return Response.json(
+				{ error: { code: 'validation_failed', message: 'not a WhatsApp number' } },
+				{ status: 400 },
+			)
+		}
+		return Response.json({ data: { phone: '+919876543210', order_updates: b.order_updates, marketing: b.marketing } })
+	})
+	try {
+		assert.deepEqual(
+			await svc.setConsent({ cartId: 'cart_abc', phone: ' 98765 43210 ', orderUpdates: true, marketing: false }),
+			{ phone: '+919876543210', orderUpdates: true, marketing: false },
+		)
+		await svc.setConsent({ phone: '9876543210', orderUpdates: false, marketing: false })
+		assert.deepEqual(sent, [
+			{
+				url: 'http://engine.test/x/notify-whatsapp/consent',
+				method: 'PUT',
+				body: { cart_id: 'cart_abc', phone: '98765 43210', order_updates: true, marketing: false },
+			},
+			{
+				url: 'http://engine.test/x/notify-whatsapp/consent',
+				method: 'PUT',
+				body: { cart_id: 'cart_tok', phone: '9876543210', order_updates: false, marketing: false },
+			},
+		])
+		await assert.rejects(
+			svc.setConsent({ phone: '12', orderUpdates: true, marketing: false }),
+			(err) => err instanceof m.GoCommerceError && err.status === 400 && /WhatsApp number/.test(err.message),
+		)
+	} finally {
+		delete globalThis.window
+		delete globalThis.document
+	}
 })
 
 test('credentials merge, so an unset variable does not erase a set one', () => {
@@ -2495,4 +2572,73 @@ test('a designed line, in the bag and on the order, carries its design and its p
 			[['des_1', '/engine/media/stores/s1/prev.png'], [null, null]],
 		)
 	})
+})
+
+test('a checkout carries where the shopper came from, as the storefront recorded it, and nothing stale', async () => {
+	const now = Date.now()
+	const ago = (days) => new Date(now - days * 86400000).toISOString()
+	const local = {
+		cart_id: 'cart_3',
+		gocommerce_cart_cart_3: JSON.stringify({ shippingAddress: { firstName: 'Asha', email: 'a@example.com', address_1: '1 MG Road', city: 'Pune', zip: '411001', countryCode: 'IN' } }),
+		gc_attribution: JSON.stringify({
+			first: { utm_source: 'facebook', utm_medium: 'paid', utm_campaign: 'Launch', fbclid: 'IwAR1', at: ago(12) },
+			last: { utm_source: 'google', utm_medium: 'cpc', utm_campaign: 'Diwali', gclid: 'Cj0', referrer: 'www.google.com', at: ago(1), email: 'x@y.z' },
+		}),
+	}
+	globalThis.window = {
+		location: { origin: 'https://shop.test', pathname: '/checkout/payment', hostname: 'shop.test' },
+		navigator: { userAgent: 'UA' },
+		localStorage: {
+			getItem: (k) => local[k] ?? null,
+			setItem: (k, v) => {
+				local[k] = v
+			},
+			removeItem: (k) => {
+				delete local[k]
+			},
+		},
+	}
+	globalThis.document = { cookie: '' }
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: undefined, baseDomain: undefined })
+	const bodies = []
+	const order = { id: 3, number: 'GC-3', status: 'confirmed', payment_status: 'pending', payment_provider: 'cod', currency: 'INR',
+		total: { amount_minor: 1000, currency: 'INR' }, lines: [], address: {}, created_at: '', updated_at: '' }
+	const svc = new m.CheckoutService(async (url, init) => {
+		const path = new URL(String(url)).pathname
+		if (path === '/api/carts/cart_3') return Response.json({ data: { id: 'cart_3', email: 'a@example.com', lines: [], currency: 'INR' } })
+		if (path === '/api/checkout/cod') {
+			bodies.push(JSON.parse(init.body))
+			return Response.json({ data: { order, payment: { kind: 'none', provider: 'cod' } } })
+		}
+		return Response.json({ data: [] })
+	})
+	try {
+		await svc.checkoutCOD({ cartId: 'cart_3' })
+		assert.deepEqual(bodies[0].metadata, {
+			attribution: {
+				first: { utm_source: 'facebook', utm_medium: 'paid', utm_campaign: 'Launch', fbclid: 'IwAR1', at: ago(12) },
+				// Only the names the engine reads travel; anything else in storage stays there.
+				last: { utm_source: 'google', utm_medium: 'cpc', utm_campaign: 'Diwali', gclid: 'Cj0', referrer: 'www.google.com', at: ago(1) },
+			},
+		})
+
+		// A first visit older than 30 days is forgotten, and the last one, still fresh, is the first
+		// visit in the window too. A visit naming no source, or dated in the future, is none.
+		local.gc_attribution = JSON.stringify({ first: { utm_source: 'old', at: ago(31) }, last: { utm_source: 'google', at: ago(2) } })
+		await svc.checkoutCOD({ cartId: 'cart_3' })
+		const google = { utm_source: 'google', at: ago(2) }
+		assert.deepEqual(bodies[1].metadata, { attribution: { first: google, last: google } })
+		local.gc_attribution = JSON.stringify({ first: { at: ago(1) }, last: { utm_source: 'x', at: ago(-5) } })
+		await svc.checkoutCOD({ cartId: 'cart_3' })
+		assert.equal(bodies[2].metadata, undefined)
+
+		// Nothing recorded, or nothing readable: no attribution at all.
+		local.gc_attribution = '{not json'
+		await svc.checkoutCOD({ cartId: 'cart_3' })
+		assert.equal(bodies[3].metadata, undefined)
+	} finally {
+		delete globalThis.window
+		delete globalThis.document
+		m.BaseService.setCredentials({ apiUrl: undefined })
+	}
 })
