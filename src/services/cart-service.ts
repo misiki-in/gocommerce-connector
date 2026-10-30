@@ -63,19 +63,23 @@ export class CartService extends BaseService {
 
 	/**
 	 * `qty` is a change, not a total: +1 from a product page, −1 from a card's
-	 * minus button. With no cart yet, one is opened and remembered.
+	 * minus button. With no cart yet, one is opened and remembered. A
+	 * `designId` from `customizerService.saveDesign` makes the variant to the
+	 * shopper's design, on a line of its own.
 	 */
 	async addToCart({
 		cartId,
 		lineId,
 		qty = 1,
 		variantId,
+		designId,
 	}: {
 		cartId?: string | null
 		lineId?: string | null
 		qty?: number
 		productId?: string
 		variantId?: string
+		designId?: string
 	}) {
 		let id = clean(cartId) ?? storedCartId()
 		if (lineId && id) {
@@ -89,23 +93,19 @@ export class CartService extends BaseService {
 		if (qty === REMOVE || Number(qty) <= 0) return this.getCartByCartId(id)
 		if (!variantId) throw new GoCommerceError('Please choose an option before adding this to your bag.', 400)
 		if (!id) id = await this.open()
+		const body = { variant_id: Number(variantId), quantity: Number(qty), ...(designId ? { design_id: designId } : {}) }
 		try {
 			return await this.present(
-				await this.data<Cart>(`/api/carts/${encodeURIComponent(id)}/line-items`, {
-					method: 'POST',
-					body: { variant_id: Number(variantId), quantity: Number(qty) },
-				}),
+				await this.data<Cart>(`/api/carts/${encodeURIComponent(id)}/line-items`, { method: 'POST', body }),
 			)
 		} catch (err) {
-			// The remembered cart was checked out in another tab, or expired.
-			// Start a new one rather than refusing the shopper's click.
-			if (err instanceof GoCommerceError && (err.status === 404 || /checked out/.test(err.message))) {
+			// The remembered cart was checked out in another tab, or expired, so a
+			// new one is started rather than refusing the shopper's click. A missing
+			// variant or design is a 404 too, and must not leave the bag behind.
+			if (err instanceof GoCommerceError && /cart not found|checked out/.test(err.message)) {
 				const fresh = await this.open()
 				return this.present(
-					await this.data<Cart>(`/api/carts/${encodeURIComponent(fresh)}/line-items`, {
-						method: 'POST',
-						body: { variant_id: Number(variantId), quantity: Number(qty) },
-					}),
+					await this.data<Cart>(`/api/carts/${encodeURIComponent(fresh)}/line-items`, { method: 'POST', body }),
 				)
 			}
 			throw err

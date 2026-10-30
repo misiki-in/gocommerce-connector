@@ -135,6 +135,9 @@ export type CartLine = {
 	/** The add-on this line was bought as (D133), and the product it is offered with. */
 	add_on_id?: number
 	add_on_for?: number
+	/** The shopper's own design this line is made to (D162), and its picture. */
+	design_id?: string
+	design_preview_url?: string
 	compare_at_price?: Money
 }
 
@@ -231,6 +234,8 @@ export type OrderLine = {
 	shipped_quantity: number
 	unit_price: Money
 	total: Money
+	/** `design` is a copy of the design a line was made to (D162), kept whatever later happens to it. */
+	metadata?: { design?: { id: string; preview_url: string } } & Record<string, unknown>
 }
 
 export type Fulfillment = {
@@ -318,6 +323,54 @@ export type GoogleSurvey = {
 	estimated_delivery_date: string
 	opt_in_style?: string
 }
+
+/** `GET /x/customizer/products/{id}` (ext/customizer, D162): a product's design editor, in the mockup's pixels. */
+export type CustomizerSetup = {
+	product_id: number
+	mockup: { url: string; width: number; height: number }
+	overlay_url: string | null
+	print_area: { x: number; y: number; width: number; height: number; radius: number }
+	print_size: { width_mm: number; height_mm: number; dpi: number }
+	tools: { upload: boolean; text: boolean; shapes: boolean; background: boolean; stickers: boolean }
+	fonts: { key: string; family: string }[]
+	stickers: { id: number; url: string; width: number; height: number }[]
+	min_photo_px: number
+	consent: string
+}
+
+/** `POST /x/customizer/uploads`: the file as the engine kept it, turned upright, so its size is as seen. */
+export type CustomizerUpload = { upload_id: string; url: string; width: number; height: number }
+
+/** `POST /x/customizer/designs`. */
+export type CustomizerDesign = { design_id: string; preview_url: string }
+
+/**
+ * A design, version 1, as the engine checks it and stores it on the order:
+ * coordinates in the mockup's pixels from the print area's top left corner,
+ * layers drawn first to last. The engine refuses a field a layer's type does
+ * not carry.
+ */
+export type CustomizerDocument = {
+	version: 1
+	background?: string | null
+	layers: CustomizerLayer[]
+}
+
+export type CustomizerLayer = {
+	id: string
+	x: number
+	y: number
+	width: number
+	height: number
+	/** Degrees clockwise about the box's centre. */
+	rotation: number
+	opacity: number
+} & (
+	| { type: 'image'; upload_id: string }
+	| { type: 'text'; text: string; font: string; color: string; font_size: number; align?: 'left' | 'center' | 'right' }
+	| { type: 'shape'; shape: 'rect' | 'circle' | 'heart' | 'star'; color: string }
+	| { type: 'sticker'; sticker_media_id: number }
+)
 
 /** `GET /api/store`: what anyone may read about the shop. */
 export type StoreProfile = {
