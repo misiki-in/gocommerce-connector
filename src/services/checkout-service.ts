@@ -4,6 +4,7 @@ import { toEngineAddress, toOrder } from '../map'
 import { minorToMajor } from '../money'
 import {
 	cartExtras,
+	metaBrowser,
 	placedOrderByReference,
 	rememberOrder,
 	saveCartExtras,
@@ -256,12 +257,18 @@ export class CheckoutService extends BaseService {
 			...extra,
 		}
 		const serialised = JSON.stringify(body)
-		const key = extras.attempt?.body === `${code}:${serialised}` ? extras.attempt.key : newKey()
-		saveCartExtras(id, { attempt: { key, body: `${code}:${serialised}` } })
+		const retry = extras.attempt?.body === `${code}:${serialised}`
+		const key = retry ? extras.attempt!.key : newKey()
+		// Where Meta's pixel ran (metaBrowser) is not part of what makes a retry the same
+		// request: the shopper can accept the cookie banner, or Meta set _fbc, between a failed
+		// attempt and the next. A retry sends the first attempt's, since the engine refuses a key
+		// replayed with a different body.
+		const meta = retry ? extras.attempt?.meta : metaBrowser()
+		saveCartExtras(id, { attempt: { key, body: `${code}:${serialised}`, ...(meta ? { meta } : {}) } })
 
 		const result = await this.data<CheckoutResult>(`/api/checkout/${encodeURIComponent(code)}`, {
 			method: 'POST',
-			body,
+			body: meta ? { ...body, metadata: { ...extra.metadata, meta_capi: meta } } : body,
 			headers: { 'Idempotency-Key': key },
 		})
 

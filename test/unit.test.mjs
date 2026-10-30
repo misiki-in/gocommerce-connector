@@ -2037,3 +2037,163 @@ test('the contact form sends the honeypot, so the engine is the one that drops a
 		'/x/contact/messages {"name":"Asha","email":"asha@example.com","body":"Hello"}',
 	])
 })
+
+test('each ad and analytics tag reaches the storefront with its ID only while it is on', async () => {
+	m.clearStoreCache()
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test/', proxyPath: undefined, baseDomain: undefined })
+	m.setStaticStore(() => ({ id: 'from_config', name: 'Shop', plugins: { facebookPixel: {} } }))
+	let plugins = [
+		{ key: 'meta-pixel', title: 'Meta pixel', settings: { pixel_id: '1234567890' } },
+		{ key: 'microsoft-clarity', title: 'Microsoft Clarity', settings: { project_id: 'abcd1234ef' } },
+		{ key: 'hotjar', title: 'Hotjar', settings: { site_id: '3712345' } },
+		{ key: 'tiktok-pixel', title: 'TikTok pixel', settings: { pixel_id: 'C4ABCDEF' } },
+		{ key: 'pinterest-tag', title: 'Pinterest tag', settings: { tag_id: '2612345678901' } },
+		{ key: 'snapchat-pixel', title: 'Snap pixel', settings: { pixel_id: '6abc82ca-4a3a-4391-98ba-0317a8471234' } },
+	]
+	const svc = new m.StoreService(async (url) => {
+		const path = new URL(String(url)).pathname
+		if (path === '/api/checkout') return Response.json({ data: { currency: 'INR', methods: [] } })
+		if (path === '/api/plugins') return Response.json({ data: plugins })
+		return Response.json({ data: [] })
+	})
+	const tags = (store) => ({
+		facebookPixel: store.plugins.facebookPixel,
+		microsoftClarity: store.plugins.microsoftClarity,
+		hotjar: store.plugins.hotjar,
+		tiktokPixel: store.plugins.tiktokPixel,
+		pinterestTag: store.plugins.pinterestTag,
+		snapchatPixel: store.plugins.snapchatPixel,
+	})
+	assert.deepEqual(tags(await svc.getStoreByIdOrDomain()), {
+		facebookPixel: { active: true, id: '1234567890' },
+		microsoftClarity: { active: true, id: 'abcd1234ef' },
+		hotjar: { active: true, id: '3712345' },
+		tiktokPixel: { active: true, id: 'C4ABCDEF' },
+		pinterestTag: { active: true, id: '2612345678901' },
+		snapchatPixel: { active: true, id: '6abc82ca-4a3a-4391-98ba-0317a8471234' },
+	})
+
+	// Off on the engine, each is off here, whatever the static record says,
+	// and carries no ID for a storefront to load by mistake.
+	m.clearStoreCache()
+	plugins = []
+	for (const [name, tag] of Object.entries(tags(await svc.getStoreByIdOrDomain()))) {
+		assert.deepEqual(tag, { active: false }, name)
+	}
+})
+
+test('a checkout from a browser where Meta’s pixel ran tells the engine so, and one without it does not', async () => {
+	const local = {
+		cart_id: 'cart_1',
+		gocommerce_cart_cart_1: JSON.stringify({ shippingAddress: { firstName: 'Asha', email: 'a@example.com', address_1: '1 MG Road', city: 'Pune', zip: '411001', countryCode: 'IN' } }),
+	}
+	globalThis.window = {
+		location: { origin: 'https://shop.test', pathname: '/checkout/payment', hostname: 'shop.test', href: 'https://shop.test/checkout/payment?email=a%40example.com' },
+		navigator: { userAgent: 'Mozilla/5.0 (Linux; Android 14) Mobile' },
+		fbq() {},
+		localStorage: {
+			getItem: (k) => local[k] ?? null,
+			setItem: (k, v) => {
+				local[k] = v
+			},
+			removeItem: (k) => {
+				delete local[k]
+			},
+		},
+	}
+	globalThis.document = { cookie: '_fbp=fb.1.1700000000000.1234567890; other=1; _fbc=fb.1.1700000000000.AbC' }
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: undefined, baseDomain: undefined })
+	const bodies = []
+	const order = { id: 1, number: 'GC-1', status: 'confirmed', payment_status: 'pending', payment_provider: 'cod', currency: 'INR',
+		total: { amount_minor: 1000, currency: 'INR' }, lines: [], address: {}, created_at: '', updated_at: '' }
+	const svc = new m.CheckoutService(async (url, init) => {
+		const path = new URL(String(url)).pathname
+		if (path === '/api/carts/cart_1') return Response.json({ data: { id: 'cart_1', email: 'a@example.com', lines: [], currency: 'INR' } })
+		if (path === '/api/checkout/cod') {
+			bodies.push(JSON.parse(init.body))
+			return Response.json({ data: { order, payment: { kind: 'none', provider: 'cod' } } })
+		}
+		return Response.json({ data: [] })
+	})
+	try {
+		await svc.checkoutCOD({ cartId: 'cart_1' })
+		assert.deepEqual(bodies[0].metadata, {
+			meta_capi: {
+				fbp: 'fb.1.1700000000000.1234567890',
+				fbc: 'fb.1.1700000000000.AbC',
+				client_user_agent: 'Mozilla/5.0 (Linux; Android 14) Mobile',
+				// The page without its query, which can carry the shopper's details.
+				event_source_url: 'https://shop.test/checkout/payment',
+			},
+		})
+
+		// The cookie from an earlier visit, but no pixel on this page: the
+		// shopper took the choice back, and the engine is told nothing.
+		delete globalThis.window.fbq
+		await svc.checkoutCOD({ cartId: 'cart_1' })
+		assert.equal(bodies[1].metadata, undefined)
+
+		// No _fbp: the pixel never ran here, refused or blocked.
+		globalThis.window.fbq = () => {}
+		globalThis.document.cookie = 'other=1'
+		await svc.checkoutCOD({ cartId: 'cart_1' })
+		assert.equal(bodies[2].metadata, undefined)
+	} finally {
+		delete globalThis.window
+		delete globalThis.document
+		m.BaseService.setCredentials({ apiUrl: undefined })
+	}
+})
+
+test('a retry after a failed checkout keeps its key and body, though the pixel started in between', async () => {
+	const local = {
+		cart_id: 'cart_2',
+		gocommerce_cart_cart_2: JSON.stringify({ shippingAddress: { firstName: 'Asha', email: 'a@example.com', address_1: '1 MG Road', city: 'Pune', zip: '411001', countryCode: 'IN' } }),
+	}
+	globalThis.window = {
+		location: { origin: 'https://shop.test', pathname: '/checkout/payment', hostname: 'shop.test' },
+		navigator: { userAgent: 'UA' },
+		localStorage: {
+			getItem: (k) => local[k] ?? null,
+			setItem: (k, v) => {
+				local[k] = v
+			},
+			removeItem: (k) => {
+				delete local[k]
+			},
+		},
+	}
+	globalThis.document = { cookie: '' }
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: undefined, baseDomain: undefined })
+	const sent = []
+	let fail = true
+	const order = { id: 2, number: 'GC-2', status: 'confirmed', payment_status: 'pending', payment_provider: 'cod', currency: 'INR',
+		total: { amount_minor: 1000, currency: 'INR' }, lines: [], address: {}, created_at: '', updated_at: '' }
+	const svc = new m.CheckoutService(async (url, init) => {
+		const path = new URL(String(url)).pathname
+		if (path === '/api/carts/cart_2') return Response.json({ data: { id: 'cart_2', email: 'a@example.com', lines: [], currency: 'INR' } })
+		if (path === '/api/checkout/cod') {
+			sent.push({ key: init.headers['Idempotency-Key'], body: JSON.stringify(init.body) })
+			if (fail) {
+				fail = false
+				return Response.json({ error: { code: 'internal', message: 'gateway timeout' } }, { status: 502 })
+			}
+			return Response.json({ data: { order, payment: { kind: 'none', provider: 'cod' } } })
+		}
+		return Response.json({ data: [] })
+	})
+	try {
+		// No pixel on the first attempt; the shopper accepts the banner before retrying.
+		await assert.rejects(svc.checkoutCOD({ cartId: 'cart_2' }))
+		globalThis.window.fbq = () => {}
+		globalThis.document.cookie = '_fbp=fb.1.1700000000000.42'
+		await svc.checkoutCOD({ cartId: 'cart_2' })
+		assert.equal(sent.length, 2)
+		assert.equal(sent[1].key, sent[0].key, 'the retry resumes the first attempt')
+		assert.equal(sent[1].body, sent[0].body, 'and sends exactly what it sent')
+	} finally {
+		delete globalThis.window
+		delete globalThis.document
+		m.BaseService.setCredentials({ apiUrl: undefined })
+	}
+})
