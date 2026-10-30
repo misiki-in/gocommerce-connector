@@ -2616,17 +2616,28 @@ test('design_required, or any refusal not about the cart itself, reaches the sto
 })
 
 test('a product says whether it is made to a design, and one from an engine that does not say is unknown', () => {
-	const hit = { id: 7, slug: 'cotton-tee', title: 'Cotton tee', description: '', tags: null, currency: 'USD',
-		price_minor: 2500, price_max_minor: 2500, in_stock: true, skus: null, updated_at: 1790000000 }
 	assert.deepEqual(
 		[
 			m.toProduct(product({ designable: true })).designable,
 			m.toProduct(product({ designable: false })).designable,
 			m.toProduct(product()).designable,
 			m.toProduct(product({ designable: null })).designable,
-			m.fromSearchDoc(hit).designable,
 		],
-		[true, false, undefined, undefined, undefined],
+		[true, false, undefined, undefined],
+	)
+})
+
+test('a search hit says whether its product is made to a design, and a hit from an index that does not say is unknown', () => {
+	const hit = (over = {}) => ({ id: 7, slug: 'cotton-tee', title: 'Cotton tee', description: '', tags: null, currency: 'USD',
+		price_minor: 2500, price_max_minor: 2500, in_stock: true, skus: null, updated_at: 1790000000, ...over })
+	assert.deepEqual(
+		[
+			m.fromSearchDoc(hit({ designable: true })).designable,
+			m.fromSearchDoc(hit({ designable: false })).designable,
+			m.fromSearchDoc(hit()).designable,
+			m.fromSearchDoc(hit({ designable: null })).designable,
+		],
+		[true, false, undefined, undefined],
 	)
 })
 

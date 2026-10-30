@@ -525,6 +525,8 @@ export type SearchDoc = {
 	price_max_minor: number
 	in_stock: boolean
 	skus: string[] | null
+	/** As on the product (D174), as of its last change or reindex; absent from an index built before the flag. */
+	designable?: boolean
 	updated_at: number
 }
 

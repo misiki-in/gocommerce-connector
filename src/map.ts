@@ -252,7 +252,7 @@ export function fromSearchDoc(d: SearchDoc) {
 		// built from it must not claim to count.
 		manageInventory: false,
 		allowBackorder: false,
-		designable: undefined,
+		designable: typeof d.designable === 'boolean' ? d.designable : undefined,
 		productTags: arr(d.tags).join(','),
 		category: d.category ? { name: d.category.split(' / ').pop() ?? d.category, slug: '' } : null,
 		vendor: d.vendor ? { businessName: d.vendor } : null,
