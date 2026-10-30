@@ -2568,6 +2568,53 @@ test('only a missing cart starts a new one; a missing design is refused and the 
 	})
 })
 
+function refusingCart(status, code, message) {
+	const posts = []
+	const svc = new m.CartService(async (url, init) => {
+		const path = new URL(String(url)).pathname
+		if (init?.method === 'POST') posts.push(path)
+		if (path === '/api/carts') return Response.json({ data: { id: 'cart2', status: 'open', currency: 'INR', line_items: [] } })
+		if (path === '/api/carts/cart1/line-items') return Response.json({ error: { code, message } }, { status })
+		if (path === '/api/carts/cart2/line-items')
+			return Response.json({ data: { id: 'cart2', status: 'open', currency: 'INR', line_items: [cartLine({ variant_id: 97 })] } })
+		return Response.json({ error: { code: 'not_found', message: 'no' } }, { status: 404 })
+	})
+	return { svc, posts }
+}
+
+test('a gone or checked-out cart is replaced, told by its code, or by its words from an older engine', async () => {
+	await withCart(async () => {
+		m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: undefined, baseDomain: undefined })
+		for (const [status, code, message] of [
+			[404, 'cart_not_found', 'this bag has expired'],
+			[409, 'cart_checked_out', 'this bag is an order now'],
+			[404, 'not_found', 'cart not found'],
+			[409, 'conflict', 'this cart has already been checked out'],
+		]) {
+			const { svc, posts } = refusingCart(status, code, message)
+			const cart = await svc.addToCart({ variantId: '97' })
+			assert.equal(cart.id, 'cart2', code)
+			assert.deepEqual(posts, ['/api/carts/cart1/line-items', '/api/carts', '/api/carts/cart2/line-items'], code)
+		}
+	})
+})
+
+test('design_required, or any refusal not about the cart itself, reaches the storefront with its code, and the bag stays', async () => {
+	await withCart(async () => {
+		m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: undefined, baseDomain: undefined })
+		for (const [code, message] of [
+			['design_required', 'this product is made to your design; design it before adding it to the bag'],
+			['design_required', 'design this case before it is checked out'],
+			['conflict', 'part of this basket is already being checked out; wait for it to finish'],
+		]) {
+			const { svc, posts } = refusingCart(409, code, message)
+			const err = await svc.addToCart({ variantId: '97' }).catch((e) => e)
+			assert.deepEqual([err instanceof m.GoCommerceError, err.status, err.code, err.message], [true, 409, code, message])
+			assert.deepEqual(posts, ['/api/carts/cart1/line-items'], message)
+		}
+	})
+})
+
 test('a product says whether it is made to a design, and one from an engine that does not say is unknown', () => {
 	const hit = { id: 7, slug: 'cotton-tee', title: 'Cotton tee', description: '', tags: null, currency: 'USD',
 		price_minor: 2500, price_max_minor: 2500, in_stock: true, skus: null, updated_at: 1790000000 }
