@@ -2401,6 +2401,30 @@ test('a design goes into the bag beside its variant, on the retry to a fresh car
 	})
 })
 
+test('only a missing cart starts a new one; a missing design is refused and the bag stays', async () => {
+	await withCart(async () => {
+		m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: undefined, baseDomain: undefined })
+		const posts = []
+		let missing = 'no design des_9 in this store'
+		const svc = new m.CartService(async (url, init) => {
+			const path = new URL(String(url)).pathname
+			if (init?.method === 'POST') posts.push(path)
+			if (path === '/api/carts') return Response.json({ data: { id: 'cart2', status: 'open', currency: 'INR', line_items: [] } })
+			if (path === '/api/carts/cart2/line-items')
+				return Response.json({ data: { id: 'cart2', status: 'open', currency: 'INR', line_items: [cartLine({ variant_id: 97 })] } })
+			return Response.json({ error: { code: 'not_found', message: missing } }, { status: 404 })
+		})
+		await assert.rejects(svc.addToCart({ variantId: '97', designId: 'des_9' }), /no design des_9/)
+		assert.deepEqual(posts, ['/api/carts/cart1/line-items'])
+
+		posts.length = 0
+		missing = 'cart not found'
+		const cart = await svc.addToCart({ variantId: '97' })
+		assert.equal(cart.id, 'cart2')
+		assert.deepEqual(posts, ['/api/carts/cart1/line-items', '/api/carts', '/api/carts/cart2/line-items'])
+	})
+})
+
 test('a designed line, in the bag and on the order, carries its design and its picture through the proxy', async () => {
 	await withProxy(async () => {
 		const bagged = m.toCartLine(cartLine({ design_id: 'des_1', design_preview_url: '/media/stores/s1/prev.png' }))

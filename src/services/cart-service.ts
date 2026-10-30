@@ -99,9 +99,10 @@ export class CartService extends BaseService {
 				await this.data<Cart>(`/api/carts/${encodeURIComponent(id)}/line-items`, { method: 'POST', body }),
 			)
 		} catch (err) {
-			// The remembered cart was checked out in another tab, or expired.
-			// Start a new one rather than refusing the shopper's click.
-			if (err instanceof GoCommerceError && (err.status === 404 || /checked out/.test(err.message))) {
+			// The remembered cart was checked out in another tab, or expired, so a
+			// new one is started rather than refusing the shopper's click. A missing
+			// variant or design is a 404 too, and must not leave the bag behind.
+			if (err instanceof GoCommerceError && /cart not found|checked out/.test(err.message)) {
 				const fresh = await this.open()
 				return this.present(
 					await this.data<Cart>(`/api/carts/${encodeURIComponent(fresh)}/line-items`, { method: 'POST', body }),
