@@ -2641,6 +2641,54 @@ test('a search hit says whether its product is made to a design, and a hit from 
 	)
 })
 
+test('buy again says which past lines were designed and which products are made to a design', async () => {
+	const store = { gocommerce_token: 'sess_1' }
+	globalThis.window = {
+		location: { origin: 'http://storefront.test', hostname: 'storefront.test' },
+		localStorage: {
+			getItem: (k) => store[k] ?? null,
+			setItem: (k, v) => {
+				store[k] = v
+			},
+			removeItem: (k) => {
+				delete store[k]
+			},
+		},
+	}
+	globalThis.document = { cookie: '' }
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const line = (id, product_id, over = {}) => ({ id, product_id, variant_id: 90 + id, sku: `S${id}`, title: `Line ${id}`, quantity: 1,
+		shipped_quantity: 1, unit_price: money(49900, 'INR'), total: money(49900, 'INR'), ...over })
+	const lines = [
+		line(1, 41, { metadata: { design: { id: 'des_1', preview_url: '/media/stores/s1/prev.png' } } }),
+		line(2, 42),
+		line(3, 43),
+		line(4, 44),
+	]
+	const flags = { 41: { designable: true }, 42: { designable: true }, 43: { designable: false }, 44: {} }
+	try {
+		const svc = new m.OrderService(async (url) => {
+			const path = new URL(String(url)).pathname
+			if (path === '/x/identity/me/orders') return Response.json({ data: [{ id: 9, number: 'GC-000009', currency: 'INR', line_items: lines }] })
+			const id = Number(path.split('/').pop())
+			return Response.json({ data: product({ id, slug: `case-${id}`, ...flags[id] }) })
+		})
+		assert.deepEqual(
+			(await svc.buyAgain()).map((l) => [l.slug, l.designId, l.designable]),
+			[
+				['case-41', 'des_1', true],
+				['case-42', null, true],
+				['case-43', null, false],
+				['case-44', null, undefined],
+			],
+		)
+	} finally {
+		delete globalThis.window
+		delete globalThis.document
+		m.BaseService.setCredentials({ apiUrl: undefined })
+	}
+})
+
 test('a designed line, in the bag and on the order, carries its design and its picture through the proxy', async () => {
 	await withProxy(async () => {
 		const bagged = m.toCartLine(cartLine({ design_id: 'des_1', design_preview_url: '/media/stores/s1/prev.png' }))
