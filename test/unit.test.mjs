@@ -3170,7 +3170,6 @@ test('a total that moved since the quote is refused with the new figures, and co
 		assert.deepEqual(changes, [[figures, sentence]])
 		assert.equal(placedBy.size, 0)
 
-		// The shopper confirms the new total, its answer is lost on the way back, and they confirm again.
 		loseAnswer = true
 		svc.expectTotal({ cartId: 'cart_q', total: 1201 })
 		await assert.rejects(svc.checkoutCOD({ cartId: 'cart_q' }), { status: 502 })

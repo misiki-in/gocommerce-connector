@@ -298,10 +298,7 @@ export class CheckoutService extends BaseService {
 	 * created the order leaves the cart converted: only a retry under the same
 	 * key resumes that order, and without one the shopper is stuck. A changed
 	 * request — a different address, a different method — gets a new key, since
-	 * the engine refuses a key replayed with a different body. The total the
-	 * shopper confirmed is left out of that sameness: checkout refuses a total
-	 * that moved before it records the key, so confirming the new total under
-	 * the same key still places one order.
+	 * the engine refuses a key replayed with a different body.
 	 */
 	private async place(
 		code: string,
@@ -348,7 +345,11 @@ export class CheckoutService extends BaseService {
 			},
 			headers: { 'Idempotency-Key': key },
 		}).catch((err: unknown) => {
-			throw expected ? totalMoved(err, expected) : err
+			const now = movedTotal(err)
+			if (!expected || !now) throw err
+			const message = `Your total changed to ${shopperAmount(now.total, currency)}. Check the new total and confirm again.`
+			expected.onChange?.(now, message)
+			throw new GoCommerceError(message, 409, 'conflict', now)
 		})
 
 		// The access token is returned once; a replayed response leaves it out,
@@ -383,21 +384,12 @@ const unsupported = (method: string, why: string) => new NotSupportedError('Chec
 
 type Expected = { total: number; onChange?: (quote: ReturnType<typeof toCheckoutQuote>, message: string) => void }
 
-/**
- * Checkout's refusal of a total that moved after the quote (D185): its figures now, as getQuote
- * gives them, and the sentence a shopper reads. Any other failure passes as it came.
- */
-function totalMoved(err: unknown, expected: Expected): unknown {
-	if (!(err instanceof GoCommerceError) || err.status !== 409) return err
+function movedTotal(err: unknown) {
+	if (!(err instanceof GoCommerceError) || err.status !== 409) return null
 	const now = err.details as CheckoutQuote | null
-	if (!now?.total) return err
-	const quote = toCheckoutQuote(now)
-	const message = `Your total changed to ${shopperAmount(quote.total, now.total.currency)}. Check the new total and confirm again.`
-	expected.onChange?.(quote, message)
-	return new GoCommerceError(message, 409, err.code, quote)
+	return now?.total ? toCheckoutQuote(now) : null
 }
 
-/** `₹1,201`, `₹1,151.19`, `$12.50`: grouped the way the currency's shoppers read it, no `.00` on a whole amount. */
 function shopperAmount(amount: number, currency: string): string {
 	return new Intl.NumberFormat(currency === 'INR' ? 'en-IN' : 'en', {
 		style: 'currency',
