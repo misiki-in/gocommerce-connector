@@ -120,6 +120,17 @@ describe('catalogue', { skip: !live }, () => {
 		)
 	})
 
+	test('a category page’s filter lists the child under its parent, which counts the child’s products', async () => {
+		const res = await m.searchService.searchWithUrl(new URL('http://storefront.test/x'), seed.parent.slug)
+		assert.deepEqual(
+			res.facets.categories.map((c) => [c.slug, c.count, c.depth]),
+			[
+				[seed.parent.slug, 1, 0],
+				[seed.child.slug, 1, 1],
+			],
+		)
+	})
+
 	test('an unknown category is an empty result, which the storefront turns into its 404', async () => {
 		const res = await m.searchService.searchWithUrl(new URL('http://storefront.test/x'), `nope-${RUN}`)
 		assert.deepEqual(res.data, [])
