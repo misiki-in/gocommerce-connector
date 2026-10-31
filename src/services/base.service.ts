@@ -2,7 +2,7 @@ import type { Credentials } from '../config'
 import type { Envelope } from '../engine'
 import { GoCommerceError } from '../errors'
 import { resolveRestLocally } from '../rest-guard'
-import { sessionToken } from '../browser'
+import { currentMe, sessionToken } from '../browser'
 
 type Query = Record<string, string | number | boolean | null | undefined | (string | number)[]>
 
@@ -193,13 +193,19 @@ export class BaseService {
 	 * Prices a cart at the signed-in shopper's customer-group prices. The
 	 * engine does this only for an account whose email is confirmed (403
 	 * otherwise), and the cart stays the shopper's either way — so a refusal
-	 * is not an error, and neither is a build without ext/identity.
+	 * is not an error, and neither is a build without ext/identity. A refused
+	 * claim still gives the cart the account's email, which the claim would
+	 * have set, or the checkout asks the shopper for it again.
 	 */
 	protected async claimCartForAccount(cartId: string): Promise<void> {
 		try {
 			await this.engine('/x/identity/me/carts', { method: 'POST', body: { cart_id: cartId }, auth: true })
 		} catch {
-			// Unconfirmed email, no identity module, or a cart already checked out.
+			const email = currentMe()?.email
+			if (email)
+				await this.engine(`/api/carts/${encodeURIComponent(cartId)}/email`, { method: 'PUT', body: { email } }).catch(
+					() => undefined,
+				)
 		}
 	}
 
