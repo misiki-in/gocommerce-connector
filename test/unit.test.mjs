@@ -3120,6 +3120,30 @@ test('an order carries the total the shopper confirmed, in paise, and none when 
 	}
 })
 
+test('only a total_changed refusal reads as a moved total, and a key already used reads as the other tab', async () => {
+	quoteBrowser(shopper)
+	const figures = { subtotal: inr(100000), shipping: inr(15000), discount: null, tax: inr(5100), tax_inclusive: false, payment_fee: inr(0), total: inr(120100) }
+	let answer
+	const svc = new m.CheckoutService(async (url) => {
+		if (new URL(String(url)).pathname === '/api/carts/cart_q') return quoteCart('asha@example.com')
+		return answer()
+	})
+	try {
+		const changes = []
+		svc.expectTotal({ cartId: 'cart_q', total: 1151, onChange: (...args) => changes.push(args) })
+		answer = () => Response.json({ error: { code: 'conflict', message: 'a line in this basket changed', details: figures } }, { status: 409 })
+		const line = await svc.checkoutCOD({ cartId: 'cart_q' }).catch((e) => e)
+		assert.deepEqual([line.status, line.code, line.message, changes.length], [409, 'conflict', 'a line in this basket changed', 0])
+
+		answer = () =>
+			Response.json({ error: { code: 'validation_failed', message: 'this Idempotency-Key was already used for a different request' } }, { status: 400 })
+		const tab = await svc.checkoutCOD({ cartId: 'cart_q' }).catch((e) => e)
+		assert.deepEqual([tab.status, tab.message], [400, 'This order was already placed in another tab. Check that tab for its confirmation.'])
+	} finally {
+		leaveBrowser()
+	}
+})
+
 test('a total that moved since the quote is refused with the new figures, and confirming the new one places one order under the same key', async () => {
 	quoteBrowser(shopper)
 	const now = {
@@ -3149,7 +3173,7 @@ test('a total that moved since the quote is refused with the new figures, and co
 		}
 		if (quoted !== now.total.amount_minor) {
 			return Response.json(
-				{ error: { code: 'conflict', message: `the total is now 120100, not the ${quoted} quoted; show the shopper the new figures`, details: now } },
+				{ error: { code: 'total_changed', message: `the total is now 120100, not the ${quoted} quoted; show the shopper the new figures`, details: now } },
 				{ status: 409 },
 			)
 		}

@@ -345,11 +345,14 @@ export class CheckoutService extends BaseService {
 			},
 			headers: { 'Idempotency-Key': key },
 		}).catch((err: unknown) => {
+			if (keyAlreadyUsed(err)) {
+				throw new GoCommerceError('This order was already placed in another tab. Check that tab for its confirmation.', 400, err.code)
+			}
 			const now = movedTotal(err)
 			if (!expected || !now) throw err
 			const message = `Your total changed to ${shopperAmount(now.total, currency)}. Check the new total and confirm again.`
 			expected.onChange?.(now, message)
-			throw new GoCommerceError(message, 409, 'conflict', now)
+			throw new GoCommerceError(message, 409, 'total_changed', now)
 		})
 
 		// The access token is returned once; a replayed response leaves it out,
@@ -384,8 +387,14 @@ const unsupported = (method: string, why: string) => new NotSupportedError('Chec
 
 type Expected = { total: number; onChange?: (quote: ReturnType<typeof toCheckoutQuote>, message: string) => void }
 
+// The engine stores a key only with the order it placed, so a key it calls used was spent by a tab
+// that showed another total.
+function keyAlreadyUsed(err: unknown): err is GoCommerceError {
+	return err instanceof GoCommerceError && err.status === 400 && err.message.includes('Idempotency-Key was already used')
+}
+
 function movedTotal(err: unknown) {
-	if (!(err instanceof GoCommerceError) || err.status !== 409) return null
+	if (!(err instanceof GoCommerceError) || err.code !== 'total_changed') return null
 	const now = err.details as CheckoutQuote | null
 	return now?.total ? toCheckoutQuote(now) : null
 }
