@@ -2639,6 +2639,104 @@ test('only a missing cart starts a new one; a missing design is refused and the 
 	})
 })
 
+const freshBrowser = () => {
+	const local = {}
+	const jar = new Map()
+	globalThis.window = {
+		location: { origin: 'http://storefront.test', hostname: 'storefront.test' },
+		localStorage: {
+			getItem: (k) => local[k] ?? null,
+			setItem: (k, v) => {
+				local[k] = String(v)
+			},
+			removeItem: (k) => {
+				delete local[k]
+			},
+		},
+	}
+	globalThis.document = {
+		get cookie() {
+			return [...jar].map(([k, v]) => `${k}=${v}`).join('; ')
+		},
+		set cookie(line) {
+			const [pair] = line.split(';')
+			const at = pair.indexOf('=')
+			jar.set(pair.slice(0, at).trim(), pair.slice(at + 1).trim())
+		},
+	}
+}
+
+const accountEngine = ({ confirmed = false, putFails = false } = {}) => {
+	const carts = {}
+	const puts = []
+	const fetch = async (url, init = {}) => {
+		const path = new URL(String(url)).pathname
+		const body = init.body ? JSON.parse(init.body) : {}
+		const id = path.split('/')[3]
+		if (init.method === 'POST' && path === '/api/carts') {
+			carts.cart2 = { id: 'cart2', status: 'open', currency: 'INR', line_items: [] }
+			return Response.json({ data: carts.cart2 }, { status: 201 })
+		}
+		if (path === '/x/identity/login') {
+			const record = { id: 9, email: 'ada@example.com', name: 'Ada' }
+			return Response.json({ data: { token: 'sess_1', expires_at: '2099-01-01T00:00:00Z', record } })
+		}
+		if (path === '/x/identity/me/carts') {
+			if (!confirmed)
+				return Response.json({ error: { code: 'forbidden', message: 'confirm your email first' } }, { status: 403 })
+			carts[body.cart_id].email = 'ada@example.com'
+			return Response.json({ data: carts[body.cart_id] })
+		}
+		if (path.endsWith('/email')) {
+			puts.push(id)
+			if (putFails) return Response.json({ error: { code: 'internal', message: 'try again' } }, { status: 500 })
+			carts[id].email = body.email
+			return Response.json({ data: carts[id] })
+		}
+		if (path.endsWith('/line-items')) {
+			carts[id].line_items = [cartLine({ variant_id: 97 })]
+			return Response.json({ data: carts[id] })
+		}
+		return Response.json({ error: { code: 'not_found', message: 'no' } }, { status: 404 })
+	}
+	return { carts, puts, fetch }
+}
+
+test('a signed-in shopper’s bag carries their email, confirmed or not, and a failed write never fails the bag', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: undefined, baseDomain: undefined })
+	const signIn = (engine) => new m.UserService(engine.fetch).login({ email: 'ada@example.com', password: 'pw' })
+	const addToBag = (engine) => new m.CartService(engine.fetch).addToCart({ variantId: '97' })
+	try {
+		freshBrowser()
+		let engine = accountEngine()
+		assert.equal((await addToBag(engine)).email, null, 'a guest')
+		await signIn(engine)
+		assert.equal(engine.carts.cart2.email, 'ada@example.com', 'a guest’s bag, then signing in')
+
+		freshBrowser()
+		engine = accountEngine()
+		await signIn(engine)
+		assert.equal((await addToBag(engine)).email, 'ada@example.com', 'signed in, then a bag')
+
+		freshBrowser()
+		engine = accountEngine({ confirmed: true })
+		await signIn(engine)
+		assert.equal((await addToBag(engine)).email, 'ada@example.com', 'a confirmed account')
+		assert.deepEqual(engine.puts, [], 'the claim set it')
+
+		freshBrowser()
+		engine = accountEngine({ putFails: true })
+		await signIn(engine)
+		const bag = await addToBag(engine)
+		assert.equal(bag.lineItems.length, 1, 'the line goes in')
+		assert.deepEqual(engine.puts, ['cart2'])
+	} finally {
+		delete globalThis.window
+		delete globalThis.document
+		m.BaseService.setCredentials({ apiUrl: undefined })
+	}
+})
+
 function refusingCart(status, code, message) {
 	const posts = []
 	const svc = new m.CartService(async (url, init) => {
