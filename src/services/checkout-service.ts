@@ -1,7 +1,7 @@
-import type { Cart, CheckoutResult } from '../engine'
+import type { Cart, CheckoutQuote, CheckoutResult } from '../engine'
 import { GoCommerceError, NotSupportedError } from '../errors'
-import { toEngineAddress, toOrder } from '../map'
-import { minorToMajor } from '../money'
+import { toCheckoutQuote, toEngineAddress, toOrder } from '../map'
+import { minorToMajor, toMinor } from '../money'
 import {
 	cartExtras,
 	landingAttribution,
@@ -28,6 +28,8 @@ import { BaseService } from './base.service'
  * the order page shows `payment_status` once the webhook has landed.
  */
 export class CheckoutService extends BaseService {
+	private expected = new Map<string, Expected>()
+
 	/** Delivery options for the address on the cart: `{ data: [{ id, name, base_rate }] }`. */
 	async getShippingRates({ cartId }: { cartId?: string } = {}) {
 		const id = cartId || storedCartId()
@@ -218,6 +220,71 @@ export class CheckoutService extends BaseService {
 		return { methods: options.methods ?? [], currency: options.currency }
 	}
 
+	/**
+	 * What checkout would charge for the cart now, by the storefront's method
+	 * code (`COD`, `RAZORPAY`, `PAYPAL`) or none yet (D185). Null until the
+	 * address step has stored an address, and null from an engine before D185.
+	 *
+	 * A refusal is checkout's own: the same GoCommerceError, with the same
+	 * message, that placing the order would raise now.
+	 */
+	async getQuote({ cartId, method = '' }: { cartId?: string; method?: string } = {}) {
+		const id = cartId || storedCartId()
+		if (!id || !cartExtras(id).shippingAddress) return null
+		const { extras, email, address } = await this.storedCheckout(id)
+		const code = method.toLowerCase() === 'paypal' ? await this.redirectGateway() : method.toLowerCase()
+		try {
+			const quote = await this.data<CheckoutQuote>('/api/checkout/quote', {
+				query: {
+					cart: id,
+					country: address.country,
+					state: address.state,
+					shipping_rate_id: extras.shippingRateId || undefined,
+					method: code || undefined,
+					email: email || undefined,
+				},
+			})
+			return toCheckoutQuote(quote)
+		} catch (err) {
+			if (err instanceof GoCommerceError && (err.status === 405 || (err.status === 404 && err.message.startsWith('no route for ')))) {
+				return null
+			}
+			throw err
+		}
+	}
+
+	/**
+	 * The total on screen as the shopper confirms, from getQuote, or null when nothing was quoted
+	 * (D185). Every order placed for the cart then carries it, and checkout refuses one whose own
+	 * total differs instead of charging it: `onChange` gets checkout's figures now and the sentence
+	 * the placing call fails with.
+	 */
+	expectTotal({
+		cartId,
+		total,
+		onChange,
+	}: {
+		cartId?: string
+		total?: number | null
+		onChange?: Expected['onChange']
+	}) {
+		const id = cartId || storedCartId()
+		if (!id) return
+		if (typeof total === 'number') this.expected.set(id, { total, onChange })
+		else this.expected.delete(id)
+	}
+
+	private async storedCheckout(cartId?: string) {
+		const id = cartId || storedCartId()
+		if (!id) throw new GoCommerceError('Your bag is empty.', 400)
+		const extras = cartExtras(id)
+		const ship = extras.shippingAddress
+		if (!ship) throw new GoCommerceError('Add a delivery address first.', 400)
+		const cart = await this.data<Cart>(`/api/carts/${encodeURIComponent(id)}`)
+		const email = cart.email || (ship.email ? String(ship.email) : '')
+		return { id, extras, email, address: toEngineAddress(ship), currency: cart.currency }
+	}
+
 	private async redirectGateway(): Promise<string | undefined> {
 		const { methods } = await this.listMethods()
 		return methods.find((m) => REDIRECT_GATEWAYS.has(m.code))?.code
@@ -238,16 +305,8 @@ export class CheckoutService extends BaseService {
 		cartId?: string,
 		extra: { return_url?: string; payment_data?: Record<string, string>; metadata?: Record<string, unknown> } = {},
 	): Promise<CheckoutResult> {
-		const id = cartId || storedCartId()
-		if (!id) throw new GoCommerceError('Your bag is empty.', 400)
-		const extras = cartExtras(id)
-		const ship = extras.shippingAddress
-		if (!ship) throw new GoCommerceError('Add a delivery address first.', 400)
-
-		const cart = await this.data<Cart>(`/api/carts/${encodeURIComponent(id)}`)
-		const email = cart.email || (ship.email ? String(ship.email) : '')
+		const { id, extras, email, address, currency } = await this.storedCheckout(cartId)
 		if (!email) throw new GoCommerceError('Add an email address so we can send your receipt.', 400)
-		const address = toEngineAddress(ship)
 		const body = {
 			cart_id: id,
 			email,
@@ -276,10 +335,24 @@ export class CheckoutService extends BaseService {
 			...(attribution ? { attribution } : {}),
 		}
 
+		const expected = this.expected.get(id)
+
 		const result = await this.data<CheckoutResult>(`/api/checkout/${encodeURIComponent(code)}`, {
 			method: 'POST',
-			body: Object.keys(metadata).length ? { ...body, metadata } : body,
+			body: {
+				...(Object.keys(metadata).length ? { ...body, metadata } : body),
+				...(expected ? { quoted_total_minor: toMinor(expected.total, currency) } : {}),
+			},
 			headers: { 'Idempotency-Key': key },
+		}).catch((err: unknown) => {
+			if (keyAlreadyUsed(err)) {
+				throw new GoCommerceError('This order was already placed in another tab. Check that tab for its confirmation.', 400, err.code)
+			}
+			const now = movedTotal(err)
+			if (!expected || !now) throw err
+			const message = `Your total changed to ${shopperAmount(now.total, currency)}. Check the new total and confirm again.`
+			expected.onChange?.(now, message)
+			throw new GoCommerceError(message, 409, 'total_changed', now)
 		})
 
 		// The access token is returned once; a replayed response leaves it out,
@@ -311,6 +384,28 @@ export class CheckoutService extends BaseService {
 export const REDIRECT_GATEWAYS = new Set(['adyen', 'paddle', 'lemonsqueezy', 'creem', 'hyperswitch', 'revenuecat'])
 
 const unsupported = (method: string, why: string) => new NotSupportedError('CheckoutService', method, why)
+
+type Expected = { total: number; onChange?: (quote: ReturnType<typeof toCheckoutQuote>, message: string) => void }
+
+// The engine stores a key only with the order it placed, so a key it calls used was spent by a tab
+// that showed another total.
+function keyAlreadyUsed(err: unknown): err is GoCommerceError {
+	return err instanceof GoCommerceError && err.status === 400 && err.message.includes('Idempotency-Key was already used')
+}
+
+function movedTotal(err: unknown) {
+	if (!(err instanceof GoCommerceError) || err.code !== 'total_changed') return null
+	const now = err.details as CheckoutQuote | null
+	return now?.total ? toCheckoutQuote(now) : null
+}
+
+function shopperAmount(amount: number, currency: string): string {
+	return new Intl.NumberFormat(currency === 'INR' ? 'en-IN' : 'en', {
+		style: 'currency',
+		currency,
+		...(Number.isInteger(amount) ? { minimumFractionDigits: 0 } : {}),
+	}).format(amount)
+}
 
 function newKey(): string {
 	const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto

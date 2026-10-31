@@ -177,6 +177,8 @@ export type CartOffer = {
 	free_shipping?: boolean
 	remaining?: Money
 	reason?: string
+	/** Checkout applies it by itself when no code is typed (D179); absent on an engine before it. */
+	auto_apply?: boolean
 }
 
 /** How far a basket is from free delivery (D133). */
@@ -295,6 +297,19 @@ export type CheckoutOptions = {
 	/** `fee` is what choosing the method adds to the order (D165); absent, it adds nothing. */
 	methods: { code: string; name: string; fee?: Money }[]
 	currency: string
+}
+
+/** What checkout would charge for a cart now, placing nothing (D185). */
+export type CheckoutQuote = {
+	subtotal: Money
+	shipping: Money
+	shipping_method?: string
+	/** The code checkout took off; `auto_applied` when the shopper typed none and checkout chose it (D179). */
+	discount: { code: string; title: string; auto_applied: boolean; amount: Money; free_shipping?: boolean } | null
+	tax: Money
+	tax_inclusive: boolean
+	payment_fee: Money
+	total: Money
 }
 
 export type ShippingRate = { rate_id: number; name: string; price: Money; zone_id: number }
