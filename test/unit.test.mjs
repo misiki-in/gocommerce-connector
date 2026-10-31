@@ -2856,8 +2856,6 @@ test('a checkout carries where the shopper came from, as the storefront recorded
 	}
 })
 
-// ---------------------------------------------------------------- D179, D185: automatic codes and the checkout quote
-
 const quoteBrowser = (extras) => {
 	const local = { cart_id: 'cart_q', gocommerce_cart_cart_q: JSON.stringify(extras) }
 	globalThis.window = {

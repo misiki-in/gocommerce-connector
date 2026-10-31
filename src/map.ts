@@ -754,8 +754,7 @@ export function toCartOffer(o: CartOffer, currency: string) {
 
 /**
  * A checkout quote under the names `toOrder` gives the order it becomes, so a
- * page shows the two the same way. The total is the engine's, never re-added
- * here: the shown total and the charged one come from one sum.
+ * page shows the two the same way.
  */
 export function toCheckoutQuote(q: CheckoutQuote) {
 	const d = q.discount
