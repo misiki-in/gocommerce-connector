@@ -384,6 +384,8 @@ export type StoreProfile = {
 	phone: string
 	support_url: string
 	language: string
+	/** Whether the store's prices include tax (D177); absent on an engine before it. */
+	prices_include_tax?: boolean
 	/** Where the engine serves this store's pictures resized (D139); absent on an engine before it. */
 	images_path?: string
 	/** The store's logo, logo for dark backgrounds and square icon (D148); empty or absent when it has none. */

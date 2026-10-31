@@ -149,6 +149,7 @@ export class StoreService extends BaseService {
 				...(base.currency ?? {}),
 				code,
 				symbol: sameCurrency ? (base.currency?.symbol ?? symbolFor(code)) : symbolFor(code),
+				includesTax: profile?.prices_include_tax,
 			},
 			language: ready.language,
 			plugins: {

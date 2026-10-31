@@ -2108,6 +2108,26 @@ test("the store's own logo and icon win over the storefront's, and an absent one
 	assert.equal(plain.logoDark, '/static-dark.png')
 })
 
+test("whether prices include tax is the store's own answer, and unknown on an engine that does not say", async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test/', proxyPath: undefined, baseDomain: undefined })
+	m.setStaticStore(() => ({ id: 'from_config', name: 'Shop', currency: { code: 'INR', symbol: '₹', includesTax: false } }))
+	let profile
+	const svc = new m.StoreService(async (url) => {
+		const path = new URL(String(url)).pathname
+		if (path === '/api/checkout') return Response.json({ data: { currency: 'INR', methods: [] } })
+		if (path === '/api/store') return Response.json({ data: profile })
+		return Response.json({ data: [] })
+	})
+	const includesTax = async (answer) => {
+		m.clearStoreCache()
+		profile = { name: '', email: '', phone: '', ...answer }
+		return (await svc.getStoreByIdOrDomain()).currency.includesTax
+	}
+	assert.equal(await includesTax({ prices_include_tax: true }), true)
+	assert.equal(await includesTax({ prices_include_tax: false }), false)
+	assert.equal(await includesTax({}), undefined, 'not the static record’s false: that would be every store’s')
+})
+
 test('a contact page gets the address, map, hours and WhatsApp number the store published, and nothing it did not', async () => {
 	m.clearStoreCache()
 	m.BaseService.setCredentials({ apiUrl: 'http://engine.test/', proxyPath: undefined, baseDomain: undefined })
