@@ -3094,3 +3094,97 @@ test('an API-only engine before the quote refuses the method, and quotes nothing
 		leaveBrowser()
 	}
 })
+
+test('an order carries the total the shopper confirmed, in paise, and none when nothing was quoted', async () => {
+	quoteBrowser(shopper)
+	const placed = []
+	const svc = new m.CheckoutService(async (url, init) => {
+		const u = new URL(String(url))
+		if (u.pathname === '/api/carts/cart_q') return quoteCart('asha@example.com')
+		placed.push(JSON.parse(init.body))
+		const order = { id: 1, number: 'GC-1', status: 'confirmed', payment_status: 'pending', payment_provider: 'cod', currency: 'INR', total: inr(115009), address: {}, created_at: '', updated_at: '' }
+		return Response.json({ data: { order, payment: { kind: 'none', provider: 'cod' } } })
+	})
+	try {
+		await svc.checkoutCOD({ cartId: 'cart_q' })
+		svc.expectTotal({ cartId: 'cart_q', total: 1150.09 })
+		await svc.checkoutCOD({ cartId: 'cart_q' })
+		svc.expectTotal({ cartId: 'cart_q', total: null })
+		await svc.checkoutCOD({ cartId: 'cart_q' })
+		assert.deepEqual(
+			placed.map((body) => body.quoted_total_minor),
+			[undefined, 115009, undefined],
+		)
+	} finally {
+		leaveBrowser()
+	}
+})
+
+test('a total that moved since the quote is refused with the new figures, and confirming the new one places one order under the same key', async () => {
+	quoteBrowser(shopper)
+	const now = {
+		subtotal: inr(100000),
+		shipping: inr(15000),
+		shipping_method: 'Express',
+		discount: null,
+		tax: inr(5100),
+		tax_inclusive: false,
+		payment_fee: inr(0),
+		total: inr(120100),
+	}
+	const order = { id: 9, number: 'GC-9', status: 'confirmed', payment_status: 'pending', payment_provider: 'cod', currency: 'INR', total: now.total, address: {}, created_at: '', updated_at: '' }
+	const placedBy = new Map()
+	const sent = []
+	let loseAnswer = false
+	const svc = new m.CheckoutService(async (url, init) => {
+		const u = new URL(String(url))
+		if (u.pathname === '/api/carts/cart_q') return quoteCart('asha@example.com')
+		const key = init.headers['Idempotency-Key']
+		const quoted = JSON.parse(init.body).quoted_total_minor
+		sent.push([key, quoted])
+		const placed = Response.json({ data: { order, payment: { kind: 'none', provider: 'cod' } } })
+		if (placedBy.has(key)) {
+			if (placedBy.get(key) === init.body) return placed
+			return Response.json({ error: { code: 'validation_failed', message: 'this Idempotency-Key was already used for a different request' } }, { status: 400 })
+		}
+		if (quoted !== now.total.amount_minor) {
+			return Response.json(
+				{ error: { code: 'conflict', message: `the total is now 120100, not the ${quoted} quoted; show the shopper the new figures`, details: now } },
+				{ status: 409 },
+			)
+		}
+		placedBy.set(key, init.body)
+		if (loseAnswer) {
+			loseAnswer = false
+			return Response.json({ error: { code: 'internal_error', message: 'internal error' } }, { status: 502 })
+		}
+		return placed
+	})
+	try {
+		const changes = []
+		svc.expectTotal({ cartId: 'cart_q', total: 1151, onChange: (...args) => changes.push(args) })
+		const refused = await svc.checkoutCOD({ cartId: 'cart_q' }).catch((e) => e)
+		const figures = { subtotal: 1000, shippingCharges: 150, shippingMethod: 'Express', discount: 0, coupon: null, tax: 51, taxIncluded: false, codCharges: 0, total: 1201 }
+		const sentence = 'Your total changed to ₹1,201. Check the new total and confirm again.'
+		assert.deepEqual([refused.status, refused.message, refused.details], [409, sentence, figures])
+		assert.deepEqual(changes, [[figures, sentence]])
+		assert.equal(placedBy.size, 0)
+
+		// The shopper confirms the new total, its answer is lost on the way back, and they confirm again.
+		loseAnswer = true
+		svc.expectTotal({ cartId: 'cart_q', total: 1201 })
+		await assert.rejects(svc.checkoutCOD({ cartId: 'cart_q' }), { status: 502 })
+		svc.expectTotal({ cartId: 'cart_q', total: 1201 })
+		assert.equal((await svc.checkoutCOD({ cartId: 'cart_q' })).order_no, 'GC-9')
+
+		const key = sent[0][0]
+		assert.deepEqual(sent, [
+			[key, 115100],
+			[key, 120100],
+			[key, 120100],
+		])
+		assert.equal(placedBy.size, 1)
+	} finally {
+		leaveBrowser()
+	}
+})
