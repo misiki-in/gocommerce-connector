@@ -221,7 +221,8 @@ export class CheckoutService extends BaseService {
 	/**
 	 * What checkout would charge for the cart now, by the storefront's method
 	 * code (`COD`, `RAZORPAY`, `PAYPAL`) or none yet (D185). Null until the
-	 * address step has stored an address: the engine needs its country.
+	 * address step has stored an address, because the engine needs its
+	 * country, and null from an engine before D185, which has no such route.
 	 *
 	 * It sends what `place` sends: address, delivery choice and email, read the
 	 * same way, so the quote is the charge. A refusal is checkout's own: the
@@ -233,17 +234,22 @@ export class CheckoutService extends BaseService {
 		if (!id || !cartExtras(id).shippingAddress) return null
 		const { extras, email, address } = await this.input(id)
 		const code = method.toLowerCase() === 'paypal' ? await this.redirectGateway() : method.toLowerCase()
-		const quote = await this.data<CheckoutQuote>('/api/checkout/quote', {
-			query: {
-				cart: id,
-				country: address.country,
-				state: address.state,
-				shipping_rate_id: extras.shippingRateId || undefined,
-				method: code || undefined,
-				email: email || undefined,
-			},
-		})
-		return toCheckoutQuote(quote)
+		try {
+			const quote = await this.data<CheckoutQuote>('/api/checkout/quote', {
+				query: {
+					cart: id,
+					country: address.country,
+					state: address.state,
+					shipping_rate_id: extras.shippingRateId || undefined,
+					method: code || undefined,
+					email: email || undefined,
+				},
+			})
+			return toCheckoutQuote(quote)
+		} catch (err) {
+			if (err instanceof GoCommerceError && err.status === 404 && err.message.startsWith('no route for ')) return null
+			throw err
+		}
 	}
 
 	/** The cart and what the address step stored for it, as checkout and its quote both send them. */
