@@ -1,3 +1,5 @@
+import { keep, recall } from '../cache'
+import type { StorePassAnswer } from '../engine'
 import { GoCommerceError } from '../errors'
 import { readStaticStore } from '../static-store'
 import { BaseService, mediaUrl } from './base.service'
@@ -53,16 +55,19 @@ export class StoreService extends BaseService {
 		// a store the engine has never heard of. That page is a 404, not a render
 		// of the static record, so the storefront's 404 route can take it from here.
 		const store = this.store
-		if (store) {
-			await this.facts.plugins().catch((err) => {
-				if (isStoreMissing(err)) {
+		const [plugins, live] = await Promise.all([
+			this.facts.plugins().catch((err) => {
+				if (store && isStoreMissing(err)) {
 					throw new GoCommerceError(`store not found: no store "${store}" on this engine`, 404, 'store_not_found')
 				}
-			})
-		}
-		const live = await this.live().catch(() => ({}))
+				return undefined
+			}),
+			this.live().catch(() => ({})),
+		])
+		const known = `${this.creds.apiUrl ?? ''}|${store ?? ''}|closed`
+		const closed = plugins ? keep(known, closedOf(plugins)) : recall<StoreClosed>(known)
 		// `id` must be truthy and stable: the storefront keys a cookie on it.
-		return { ...base, ...live, id: base.id || 'gocommerce' }
+		return { ...base, ...live, closed, id: base.id || 'gocommerce' }
 	}
 
 	async getStore(storeId?: string) {
@@ -99,6 +104,49 @@ export class StoreService extends BaseService {
 			})) as T
 		}
 		return super.post<T>(path, data)
+	}
+
+	/**
+	 * A closed store's password (D170), traded for a pass. Never throws. The
+	 * engine allows 20 tries an hour per client, and sees this server as the
+	 * client unless `clientAddress`, the shopper's, travels as `X-Forwarded-For`.
+	 */
+	async unlockStore(password: string, { clientAddress }: { clientAddress?: string } = {}): Promise<StoreUnlock> {
+		const typed = password.trim()
+		if (!typed) return { outcome: 'wrong' }
+		try {
+			return { outcome: 'unlocked', pass: await this.storePass({ password: typed }, clientAddress) }
+		} catch (err) {
+			return { outcome: (err instanceof GoCommerceError && UNLOCK_REFUSED[err.status]) || 'unavailable' }
+		}
+	}
+
+	/**
+	 * A pass checked without spending a try: the pass, or null when it is wrong,
+	 * expired, ended by a new password, or the store takes none now. Throws when
+	 * the engine cannot say.
+	 */
+	async checkStorePass(token: string): Promise<StorePass | null> {
+		if (!token) return null
+		try {
+			return await this.storePass({ token })
+		} catch (err) {
+			if (err instanceof GoCommerceError && (err.status === 422 || err.status === 404)) return null
+			throw err
+		}
+	}
+
+	private async storePass(body: { password: string } | { token: string }, clientAddress?: string): Promise<StorePass> {
+		const answer = await this.data<StorePassAnswer | null>('/api/store/password', {
+			method: 'POST',
+			body,
+			headers: clientAddress && ONE_IP_ADDRESS.test(clientAddress) ? { 'X-Forwarded-For': clientAddress } : undefined,
+		})
+		const expiresAt = new Date(answer?.expires_at ?? NaN)
+		if (!answer?.token || Number.isNaN(expiresAt.getTime())) {
+			throw new GoCommerceError('The commerce engine answered a store pass without its token or expiry.', 502)
+		}
+		return { token: answer.token, expiresAt }
 	}
 
 	private async live(): Promise<Record<string, unknown>> {
@@ -227,6 +275,28 @@ export class StoreService extends BaseService {
 }
 
 export const storeService = new StoreService()
+
+/** A store its owner closed (D170): the message to show, and whether a password lets a visitor in. */
+export type StoreClosed = { message: string; password: boolean }
+
+export type StorePass = { token: string; expiresAt: Date }
+
+export type StoreUnlock =
+	{ outcome: 'unlocked'; pass: StorePass } | { outcome: 'wrong' | 'throttled' | 'open' | 'unavailable' }
+
+const ONE_IP_ADDRESS = /^[\da-f.:]{2,45}$/i
+
+const UNLOCK_REFUSED: Partial<Record<number, 'wrong' | 'throttled' | 'open'>> = {
+	422: 'wrong',
+	429: 'throttled',
+	404: 'open',
+}
+
+function closedOf(plugins: Map<string, { settings?: Record<string, unknown> }> | undefined): StoreClosed | undefined {
+	const plugin = plugins?.get('store-close')
+	if (!plugin) return undefined
+	return { message: String(plugin.settings?.message ?? ''), password: plugin.settings?.password === true }
+}
 
 /** Each tag's engine plugin, the setting that holds its ID, and its name on the store record. */
 const AD_TAGS = [

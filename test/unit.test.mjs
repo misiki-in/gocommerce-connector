@@ -3399,3 +3399,140 @@ test('a total that moved since the quote is refused with the new figures, and co
 		leaveBrowser()
 	}
 })
+
+test("a closed store's message, and whether it takes a password, come from the engine alone", async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test/', proxyPath: undefined, baseDomain: undefined })
+	m.setStaticStore(() => ({ id: 'from_config', name: 'Shop', closed: { message: 'x', password: true } }))
+	let plugins = [
+		{ key: 'store-close', title: 'Store closed', settings: { message: 'Launching soon\nBack in May', password: true } },
+	]
+	const svc = new m.StoreService(async (url) => {
+		const path = new URL(String(url)).pathname
+		if (path === '/api/plugins')
+			return plugins ? Response.json({ data: plugins }) : Response.json({ error: { code: 'internal', message: 'boom' } }, { status: 500 })
+		if (path === '/api/checkout')
+			return Response.json({ error: { code: 'internal', message: 'boom' } }, { status: 500 })
+		return Response.json({ data: [] })
+	})
+	m.clearStoreCache()
+	assert.deepEqual(
+		(await svc.getStoreByIdOrDomain()).closed,
+		{ message: 'Launching soon\nBack in May', password: true },
+		'the rest of the record failing does not open the store',
+	)
+
+	m.clearStoreCache()
+	plugins = [{ key: 'store-close', title: 'Store closed', settings: { message: 'Closed for Diwali', password: false } }]
+	assert.deepEqual((await svc.getStoreByIdOrDomain()).closed, { message: 'Closed for Diwali', password: false })
+
+	m.clearStoreCache()
+	plugins = []
+	assert.equal((await svc.getStoreByIdOrDomain()).closed, undefined)
+
+})
+
+test('a closed store stays closed when the engine cannot list its plugins for a while', async (t) => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test/', proxyPath: undefined, baseDomain: undefined })
+	let plugins = [{ key: 'store-close', title: 'Store closed', settings: { message: 'Launching soon', password: true } }]
+	const svc = new m.StoreService(async (url) => {
+		const path = new URL(String(url)).pathname
+		if (path === '/api/plugins')
+			return plugins ? Response.json({ data: plugins }) : Response.json({ error: { code: 'internal', message: 'boom' } }, { status: 500 })
+		return Response.json({ data: [] })
+	})
+	m.clearStoreCache()
+	t.mock.timers.enable({ apis: ['Date'], now: 1_800_000_000_000 })
+	assert.deepEqual((await svc.getStoreByIdOrDomain()).closed, { message: 'Launching soon', password: true })
+
+	plugins = null
+	t.mock.timers.tick(61_000)
+	assert.deepEqual((await svc.getStoreByIdOrDomain()).closed, { message: 'Launching soon', password: true }, 'a failed read keeps the last answer')
+
+	m.clearStoreCache()
+	assert.equal((await svc.getStoreByIdOrDomain()).closed, undefined, 'with nothing read yet, an unreadable list reads as open')
+})
+
+test("a typed password is trimmed and traded for a pass, carrying the shopper's address for the throttle", async () => {
+	m.clearStoreCache()
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: undefined, baseDomain: 'shopnx.in' })
+	m.setRequestHost(() => 'acme.shopnx.in')
+	const sent = []
+	const svc = new m.StoreService(async (url, init) => {
+		const { pathname } = new URL(String(url))
+		sent.push([pathname, init.method, init.body, init.headers['X-Forwarded-For'], init.headers['X-Store']])
+		return Response.json({ data: { token: '1793000000.c2ln', expires_at: '2026-11-30T00:00:00Z' } })
+	})
+	try {
+		assert.deepEqual(await svc.unlockStore('  launch-day ', { clientAddress: '203.0.113.9' }), {
+			outcome: 'unlocked',
+			pass: { token: '1793000000.c2ln', expiresAt: new Date('2026-11-30T00:00:00Z') },
+		})
+		await svc.unlockStore('launch-day')
+		await svc.unlockStore('launch-day', { clientAddress: '203.0.113.9, 198.51.100.7' })
+		assert.deepEqual(sent, [
+			['/api/store/password', 'POST', '{"password":"launch-day"}', '203.0.113.9', 'acme'],
+			['/api/store/password', 'POST', '{"password":"launch-day"}', undefined, 'acme'],
+			['/api/store/password', 'POST', '{"password":"launch-day"}', undefined, 'acme'],
+		])
+	} finally {
+		m.setRequestHost(() => undefined)
+		m.BaseService.setCredentials({ baseDomain: undefined })
+	}
+})
+
+test('a password the engine refuses is wrong, throttled, open or unavailable, never a throw', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: undefined, baseDomain: undefined })
+	let answer
+	let requests = 0
+	const svc = new m.StoreService(async () => {
+		requests++
+		return answer()
+	})
+	const refused = (status, code) => () => Response.json({ error: { code, message: 'No.' } }, { status })
+	const unlock = (reply, typed = 'launch-day') => {
+		answer = reply
+		return svc.unlockStore(typed)
+	}
+	assert.deepEqual(await unlock(refused(422, 'invalid_password')), { outcome: 'wrong' })
+	assert.deepEqual(await unlock(refused(429, 'too_many_requests')), { outcome: 'throttled' })
+	assert.deepEqual(await unlock(refused(404, 'not_found')), { outcome: 'open' })
+	assert.deepEqual(await unlock(refused(400, 'validation_failed')), { outcome: 'unavailable' })
+	assert.deepEqual(await unlock(refused(500, 'internal')), { outcome: 'unavailable' })
+	assert.deepEqual(
+		await unlock(() => {
+			throw new TypeError('fetch failed')
+		}),
+		{ outcome: 'unavailable' },
+	)
+	assert.deepEqual(
+		await unlock(() => Response.json({ data: { token: '', expires_at: 'soon' } })),
+		{ outcome: 'unavailable' },
+		'a pass the engine did not fill in',
+	)
+	requests = 0
+	assert.deepEqual(await unlock(refused(422, 'invalid_password'), '   '), { outcome: 'wrong' })
+	assert.equal(requests, 0, "nothing typed spends none of the hour's tries")
+})
+
+test('a pass is checked without spending a try: the pass, null when refused, a throw when the engine cannot say', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: undefined, baseDomain: undefined })
+	let answer
+	const bodies = []
+	const svc = new m.StoreService(async (url, init) => {
+		bodies.push(init.body)
+		return answer()
+	})
+	const refused = (status, code) => () => Response.json({ error: { code, message: 'No.' } }, { status })
+	answer = () => Response.json({ data: { token: 't', expires_at: '2026-11-30T00:00:00Z' } })
+	assert.deepEqual(await svc.checkStorePass('t'), { token: 't', expiresAt: new Date('2026-11-30T00:00:00Z') })
+	assert.deepEqual(bodies, ['{"token":"t"}'])
+	answer = refused(422, 'invalid_password')
+	assert.equal(await svc.checkStorePass('t'), null, 'wrong, expired, or from before the password changed')
+	answer = refused(404, 'not_found')
+	assert.equal(await svc.checkStorePass('t'), null, 'the store is open, or closed without a password')
+	answer = refused(500, 'internal')
+	await assert.rejects(svc.checkStorePass('t'), (err) => err instanceof m.GoCommerceError && err.status === 500)
+	bodies.length = 0
+	assert.equal(await svc.checkStorePass(''), null)
+	assert.deepEqual(bodies, [], 'no token, no request')
+})
