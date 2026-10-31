@@ -244,7 +244,9 @@ export class CheckoutService extends BaseService {
 			})
 			return toCheckoutQuote(quote)
 		} catch (err) {
-			if (err instanceof GoCommerceError && err.status === 404 && err.message.startsWith('no route for ')) return null
+			if (err instanceof GoCommerceError && (err.status === 405 || (err.status === 404 && err.message.startsWith('no route for ')))) {
+				return null
+			}
 			throw err
 		}
 	}
