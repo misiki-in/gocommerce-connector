@@ -127,6 +127,7 @@ down stays best-effort: the storefront renders from its static record.
 | --- | --- |
 | product page, listings, search | `/api/products`, `/api/products/slug/{slug}` (an id or SKU also works) |
 | category pages and tree | `/api/categories`, `/api/categories/{slug}` — a category sells its descendants |
+| the filter rail's categories | the counts from `/api/products?facets=1`, each with its ancestors from `/api/categories?flat=1`, in tree order and with its `depth`. A parent counts its whole subtree |
 | collections | `/api/collections`, `/api/collections/{slug}` |
 | featured / trending shelves | the collection with slug `featured` / `trending`; newest products when there is none |
 | product page extras | on the product from `/api/products/slug/{slug}` (D134): `highlights` and `freeGift` from the product's own metadata, `soldAtLeast` when the shop shows sold counts (null otherwise, never zero), and the product's videos after its pictures in `images` (and alone in `videos`), so the gallery plays them |
@@ -241,6 +242,10 @@ Each of these is a real gap, listed so nobody has to find it in production.
   vendor, product type, category attributes, price) need an engine that counts
   them (`GET /api/products?facets=1`, D130). Against an older one the filter
   rail is empty and a category page's attribute filters are not applied.
+- **Category counts in a large shop.** The engine counts a listing's products
+  in at most 100 categories, the ones with the most products. The connector adds
+  those counts up to each parent, so in a shop with more categories a parent's
+  count misses the products of the categories the engine left out.
 - **Tax in the bag.** The engine's cart carries no tax or total; tax is computed
   when the order is placed. The bag shows subtotal − discount + delivery, and the
   order shows the real figures.
