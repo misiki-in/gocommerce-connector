@@ -1542,7 +1542,7 @@ function listingEngine(base, facets) {
 		const u = new URL(url)
 		if (u.pathname === '/api/checkout') return Response.json({ data: { currency: 'INR' } })
 		if (u.pathname === '/api/store') return Response.json({ data: { language: 'en' } })
-		if (u.pathname === '/api/categories') return Response.json({ data: [{ id: 1, slug: 'rings', title: 'Rings', parent_id: null }] })
+		if (u.pathname === '/api/categories') return Response.json({ data: [{ id: 1, slug: 'rings', title: 'Rings', parent_id: null, depth: 0 }] })
 		asked.push(u)
 		const meta = { total: 1, limit: 24, offset: 0, page: 1, total_pages: 1, ...(facets && u.searchParams.get('facets') ? { facets } : {}) }
 		if (u.pathname === '/api/categories/rings') return Response.json({ data: { products: [product()] }, meta })
@@ -1600,7 +1600,7 @@ test('every filter the storefront writes reaches the engine, and its counts come
 	)
 	assert.deepEqual(res.facets, {
 		priceStat: { min: 1500, max: 12999.5 },
-		categories: [{ name: 'Rings', slug: 'rings', count: 4 }],
+		categories: [{ name: 'Rings', slug: 'rings', count: 4, depth: 0 }],
 		tags: [{ name: 'bridal', count: 4 }],
 		allFilters: { vendor: { Acme: 3 }, 'attributes.metal': { Gold: 2, 'Silver, sterling': 1 } },
 	})
@@ -1623,6 +1623,96 @@ test('an engine that does not count facets is asked the old way, once, and the r
 		['/api/categories/rings'],
 		'remembered: no second wasted request',
 	)
+})
+
+const cat = (id, slug, title, parent_id = null, depth = 0, position = 0) => ({ id, slug, title, parent_id, depth, position })
+
+async function railCategories(base, tree, counted) {
+	const fetch = async (url) => {
+		const u = new URL(url)
+		if (u.pathname === '/api/checkout') return Response.json({ data: { currency: 'INR' } })
+		if (u.pathname === '/api/categories') return tree ? Response.json({ data: tree }) : new Response('', { status: 500 })
+		const facets = { categories: counted.map(([id, slug, title, count]) => ({ id, slug, title, count })) }
+		return Response.json({ data: [product()], meta: { total: 1, limit: 24, offset: 0, page: 1, total_pages: 1, facets } })
+	}
+	m.BaseService.setCredentials({ apiUrl: base, channel: undefined })
+	return (await new m.SearchService(fetch).searchWithUrl(new URL('http://storefront.test/products'))).facets.categories
+}
+
+const keychains = cat(1, 'keychains', 'Keychains')
+const naruto = cat(2, 'naruto-keychains', 'Naruto keychains', 1, 1)
+const anime = cat(3, 'anime-keychains', 'Anime keychains', 1, 1, 1)
+const mugs = cat(4, 'mugs', 'Mugs', null, 0, 1)
+const village = cat(5, 'village-emblems', 'Village emblems', 2, 2)
+
+test('a counted category comes under its parent, which counts it too', async () => {
+	assert.deepEqual(await railCategories('http://tree-child.test', [keychains, naruto, mugs], [[2, 'naruto-keychains', 'Naruto keychains', 2]]), [
+		{ name: 'Keychains', slug: 'keychains', count: 2, depth: 0 },
+		{ name: 'Naruto keychains', slug: 'naruto-keychains', count: 2, depth: 1 },
+	])
+})
+
+test('a parent counts every child under it, and the rail keeps the tree’s order rather than the counts’', async () => {
+	const counted = [
+		[3, 'anime-keychains', 'Anime keychains', 3],
+		[2, 'naruto-keychains', 'Naruto keychains', 1],
+	]
+	assert.deepEqual(await railCategories('http://tree-siblings.test', [keychains, naruto, anime], counted), [
+		{ name: 'Keychains', slug: 'keychains', count: 4, depth: 0 },
+		{ name: 'Naruto keychains', slug: 'naruto-keychains', count: 1, depth: 1 },
+		{ name: 'Anime keychains', slug: 'anime-keychains', count: 3, depth: 1 },
+	])
+})
+
+test('a tree the engine sends level by level and by name, as it does past 500 categories, still lists each child under its parent, in the store’s order', async () => {
+	const counted = [
+		[5, 'village-emblems', 'Village emblems', 2],
+		[3, 'anime-keychains', 'Anime keychains', 1],
+		[4, 'mugs', 'Mugs', 1],
+	]
+	assert.deepEqual(await railCategories('http://tree-levels.test', [keychains, mugs, anime, naruto, village], counted), [
+		{ name: 'Keychains', slug: 'keychains', count: 3, depth: 0 },
+		{ name: 'Naruto keychains', slug: 'naruto-keychains', count: 2, depth: 1 },
+		{ name: 'Village emblems', slug: 'village-emblems', count: 2, depth: 2 },
+		{ name: 'Anime keychains', slug: 'anime-keychains', count: 1, depth: 1 },
+		{ name: 'Mugs', slug: 'mugs', count: 1, depth: 0 },
+	])
+})
+
+test('a root with products of its own adds them to its children’s, and an unrelated root stands alone', async () => {
+	const counted = [
+		[2, 'naruto-keychains', 'Naruto keychains', 2],
+		[1, 'keychains', 'Keychains', 1],
+		[4, 'mugs', 'Mugs', 1],
+	]
+	assert.deepEqual(await railCategories('http://tree-root.test', [keychains, naruto, mugs], counted), [
+		{ name: 'Keychains', slug: 'keychains', count: 3, depth: 0 },
+		{ name: 'Naruto keychains', slug: 'naruto-keychains', count: 2, depth: 1 },
+		{ name: 'Mugs', slug: 'mugs', count: 1, depth: 0 },
+	])
+})
+
+test('a counted category the tree does not hold is kept, at the top level', async () => {
+	const counted = [
+		[9, 'posters', 'Posters', 5],
+		[2, 'naruto-keychains', 'Naruto keychains', 2],
+	]
+	assert.deepEqual(await railCategories('http://tree-missing.test', [keychains, naruto], counted), [
+		{ name: 'Keychains', slug: 'keychains', count: 2, depth: 0 },
+		{ name: 'Naruto keychains', slug: 'naruto-keychains', count: 2, depth: 1 },
+		{ name: 'Posters', slug: 'posters', count: 5, depth: 0 },
+	])
+})
+
+test('without the tree the rail lists what the engine counted, as it did before', async () => {
+	const counted = [
+		[2, 'naruto-keychains', 'Naruto keychains', 2],
+		[4, 'mugs', 'Mugs', 1],
+	]
+	assert.deepEqual(await railCategories('http://tree-down.test', null, counted), [
+		{ name: 'Naruto keychains', slug: 'naruto-keychains', count: 2, depth: 0 },
+		{ name: 'Mugs', slug: 'mugs', count: 1, depth: 0 },
+	])
 })
 
 // ---------------------------------------------------------------- Meilisearch, and the database behind it
