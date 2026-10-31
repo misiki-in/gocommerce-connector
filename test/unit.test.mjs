@@ -3399,3 +3399,41 @@ test('a total that moved since the quote is refused with the new figures, and co
 		leaveBrowser()
 	}
 })
+
+test("a closed store's message, and whether it takes a password, come from the engine alone", async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test/', proxyPath: undefined, baseDomain: undefined })
+	m.setStaticStore(() => ({ id: 'from_config', name: 'Shop', closed: { message: 'x', password: true } }))
+	let plugins = [
+		{ key: 'store-close', title: 'Store closed', settings: { message: 'Launching soon\nBack in May', password: true } },
+	]
+	const svc = new m.StoreService(async (url) => {
+		const path = new URL(String(url)).pathname
+		if (path === '/api/plugins')
+			return plugins ? Response.json({ data: plugins }) : Response.json({ error: { code: 'internal', message: 'boom' } }, { status: 500 })
+		if (path === '/api/checkout')
+			return Response.json({ error: { code: 'internal', message: 'boom' } }, { status: 500 })
+		return Response.json({ data: [] })
+	})
+	m.clearStoreCache()
+	assert.deepEqual(
+		(await svc.getStoreByIdOrDomain()).closed,
+		{ message: 'Launching soon\nBack in May', password: true },
+		'the rest of the record failing does not open the store',
+	)
+
+	m.clearStoreCache()
+	plugins = [{ key: 'store-close', title: 'Store closed', settings: { message: 'Closed for Diwali', password: false } }]
+	assert.deepEqual((await svc.getStoreByIdOrDomain()).closed, { message: 'Closed for Diwali', password: false })
+
+	m.clearStoreCache()
+	plugins = []
+	assert.equal((await svc.getStoreByIdOrDomain()).closed, undefined)
+
+	m.clearStoreCache()
+	plugins = null
+	assert.equal(
+		(await svc.getStoreByIdOrDomain()).closed,
+		undefined,
+		'an unreadable plugin list reads as open: the engine API is public (D170) and the pages fail with it',
+	)
+})

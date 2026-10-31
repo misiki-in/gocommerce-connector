@@ -53,16 +53,15 @@ export class StoreService extends BaseService {
 		// a store the engine has never heard of. That page is a 404, not a render
 		// of the static record, so the storefront's 404 route can take it from here.
 		const store = this.store
-		if (store) {
-			await this.facts.plugins().catch((err) => {
-				if (isStoreMissing(err)) {
-					throw new GoCommerceError(`store not found: no store "${store}" on this engine`, 404, 'store_not_found')
-				}
-			})
-		}
+		const plugins = await this.facts.plugins().catch((err) => {
+			if (store && isStoreMissing(err)) {
+				throw new GoCommerceError(`store not found: no store "${store}" on this engine`, 404, 'store_not_found')
+			}
+			return undefined
+		})
 		const live = await this.live().catch(() => ({}))
 		// `id` must be truthy and stable: the storefront keys a cookie on it.
-		return { ...base, ...live, id: base.id || 'gocommerce' }
+		return { ...base, ...live, closed: closedOf(plugins), id: base.id || 'gocommerce' }
 	}
 
 	async getStore(storeId?: string) {
@@ -227,6 +226,15 @@ export class StoreService extends BaseService {
 }
 
 export const storeService = new StoreService()
+
+/** A store its owner closed (D170): the message to show, and whether a password lets a visitor in. */
+export type StoreClosed = { message: string; password: boolean }
+
+function closedOf(plugins: Map<string, { settings?: Record<string, unknown> }> | undefined): StoreClosed | undefined {
+	const plugin = plugins?.get('store-close')
+	if (!plugin) return undefined
+	return { message: String(plugin.settings?.message ?? ''), password: plugin.settings?.password === true }
+}
 
 /** Each tag's engine plugin, the setting that holds its ID, and its name on the store record. */
 const AD_TAGS = [
