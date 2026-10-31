@@ -275,6 +275,57 @@ test('an order is its own parent, with lines as an array', () => {
 	assert.equal(o.total, 500)
 	assert.deepEqual(o.lineItems, [])
 	assert.equal(o.shippingAddress.firstName, 'Ada')
+	assert.equal(o.codCharges, 0, 'an engine before D165 sends no payment fee')
+})
+
+test("cash on delivery's extra charge is on its method before the choice and on the order after", async () => {
+	m.clearStoreCache()
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const svc = new m.PaymentMethodService(async () =>
+		Response.json({
+			data: {
+				payment_methods: ['cod', 'razorpay'],
+				methods: [
+					{ code: 'cod', name: 'Cash on delivery', fee: money(6000, 'INR') },
+					{ code: 'razorpay', name: 'Razorpay' },
+				],
+				currency: 'INR',
+			},
+		}),
+	)
+	const { data } = await svc.list({})
+	assert.deepEqual(
+		data.map((x) => [x.code, x.fee]),
+		[
+			['COD', 60],
+			['RAZORPAY', 0],
+		],
+	)
+
+	const o = m.toOrder({
+		id: 124,
+		number: 'GC-000124',
+		status: 'confirmed',
+		payment_status: 'pending',
+		payment_provider: 'cod',
+		currency: 'INR',
+		subtotal: money(1400, 'INR'),
+		shipping: money(4900, 'INR'),
+		discount: money(0, 'INR'),
+		payment_fee: money(6000, 'INR'),
+		tax: money(0, 'INR'),
+		tax_inclusive: true,
+		total: money(12300, 'INR'),
+		refunded: money(0, 'INR'),
+		email: 'a@example.com',
+		address: { name: 'Ada Lovelace', line1: '1 Way', city: 'Pune', postal_code: '411001', country: 'IN' },
+		line_items: null,
+		fulfillments: null,
+		created_at: '2026-10-31T00:00:00Z',
+		updated_at: '2026-10-31T00:00:00Z',
+	})
+	assert.equal(o.codCharges, 60)
+	assert.equal(o.total, 123)
 })
 
 // ---------------------------------------------------------- google reviews
@@ -2055,6 +2106,26 @@ test("the store's own logo and icon win over the storefront's, and an absent one
 	assert.equal(plain.logo, '/static-logo.png')
 	assert.equal(plain.favicon, '/favicon.png')
 	assert.equal(plain.logoDark, '/static-dark.png')
+})
+
+test("whether prices include tax is the store's own answer, and unknown on an engine that does not say", async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test/', proxyPath: undefined, baseDomain: undefined })
+	m.setStaticStore(() => ({ id: 'from_config', name: 'Shop', currency: { code: 'INR', symbol: '₹', includesTax: false } }))
+	let profile
+	const svc = new m.StoreService(async (url) => {
+		const path = new URL(String(url)).pathname
+		if (path === '/api/checkout') return Response.json({ data: { currency: 'INR', methods: [] } })
+		if (path === '/api/store') return Response.json({ data: profile })
+		return Response.json({ data: [] })
+	})
+	const includesTax = async (answer) => {
+		m.clearStoreCache()
+		profile = { name: '', email: '', phone: '', ...answer }
+		return (await svc.getStoreByIdOrDomain()).currency.includesTax
+	}
+	assert.equal(await includesTax({ prices_include_tax: true }), true)
+	assert.equal(await includesTax({ prices_include_tax: false }), false)
+	assert.equal(await includesTax({}), undefined, 'not the static record’s false: that would be every store’s')
 })
 
 test('a contact page gets the address, map, hours and WhatsApp number the store published, and nothing it did not', async () => {
