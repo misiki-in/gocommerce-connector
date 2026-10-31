@@ -3080,3 +3080,17 @@ test('an engine before the quote has nothing to quote, while an unknown cart on 
 		leaveBrowser()
 	}
 })
+
+test('an API-only engine before the quote refuses the method, and quotes nothing too', async () => {
+	quoteBrowser(shopper)
+	const svc = new m.CheckoutService(async (url) => {
+		const u = new URL(String(url))
+		if (u.pathname === '/api/carts/cart_q') return quoteCart('asha@example.com')
+		return Response.json({ error: { code: 'method_not_allowed', message: 'GET is not allowed on /api/checkout/quote (try POST)' } }, { status: 405 })
+	})
+	try {
+		assert.equal(await svc.getQuote({ method: 'COD' }), null)
+	} finally {
+		leaveBrowser()
+	}
+})
