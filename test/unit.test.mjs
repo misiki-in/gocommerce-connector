@@ -3061,3 +3061,24 @@ test('an automatic code is marked on the basket’s offers and in the coupon dra
 		)
 	})
 })
+
+test('an engine before the quote has nothing to quote, while an unknown cart on a newer one is a refusal', async () => {
+	quoteBrowser(shopper)
+	let answer
+	const svc = new m.CheckoutService(async (url) => {
+		const u = new URL(String(url))
+		if (u.pathname === '/api/carts/cart_q') return quoteCart('asha@example.com')
+		return answer()
+	})
+	try {
+		answer = () =>
+			Response.json({ error: { code: 'not_found', message: 'no route for GET /api/checkout/quote — see /docs for what this store serves' } }, { status: 404 })
+		assert.equal(await svc.getQuote({ method: 'COD' }), null)
+
+		answer = () => Response.json({ error: { code: 'cart_not_found', message: 'cart not found' } }, { status: 404 })
+		const refused = await svc.getQuote({ method: 'COD' }).catch((e) => e)
+		assert.deepEqual([refused.status, refused.message], [404, 'cart not found'])
+	} finally {
+		leaveBrowser()
+	}
+})
