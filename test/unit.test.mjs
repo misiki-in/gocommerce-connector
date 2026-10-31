@@ -2855,3 +2855,209 @@ test('a checkout carries where the shopper came from, as the storefront recorded
 		m.BaseService.setCredentials({ apiUrl: undefined })
 	}
 })
+
+// ---------------------------------------------------------------- D179, D185: automatic codes and the checkout quote
+
+const quoteBrowser = (extras) => {
+	const local = { cart_id: 'cart_q', gocommerce_cart_cart_q: JSON.stringify(extras) }
+	globalThis.window = {
+		location: { origin: 'https://shop.test', pathname: '/checkout/payment', hostname: 'shop.test', href: 'https://shop.test/checkout/payment' },
+		navigator: { userAgent: 'test' },
+		localStorage: {
+			getItem: (k) => local[k] ?? null,
+			setItem: (k, v) => {
+				local[k] = v
+			},
+			removeItem: (k) => {
+				delete local[k]
+			},
+		},
+	}
+	globalThis.document = { cookie: '' }
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: undefined, baseDomain: undefined })
+}
+
+const leaveBrowser = () => {
+	delete globalThis.window
+	delete globalThis.document
+	m.BaseService.setCredentials({ apiUrl: undefined })
+}
+
+const shopper = {
+	shippingAddress: { firstName: 'Asha', email: 'asha@example.com', address_1: '1 Test Road', city: 'Pune', state: 'Maharashtra', zip: '411001', countryCode: 'IN' },
+	shippingRateId: '7',
+}
+
+const inr = (n) => money(n, 'INR')
+
+const quoteCart = (email) => Response.json({ data: { id: 'cart_q', email, line_items: [], currency: 'INR' } })
+
+test('a quote asks the engine with what checkout sends, and its figures arrive in rupees under the order’s names', async () => {
+	quoteBrowser(shopper)
+	const asked = []
+	let placed
+	const svc = new m.CheckoutService(async (url, init) => {
+		const u = new URL(String(url))
+		if (u.pathname === '/api/carts/cart_q') return quoteCart('')
+		if (u.pathname === '/api/checkout/quote') {
+			asked.push(Object.fromEntries(u.searchParams))
+			return Response.json({
+				data: {
+					subtotal: inr(100000),
+					shipping: inr(4900),
+					shipping_method: 'Standard',
+					discount: { code: 'AUTO10', title: 'Ten percent', auto_applied: true, amount: inr(10000) },
+					tax: inr(16219),
+					tax_inclusive: false,
+					payment_fee: inr(4000),
+					total: inr(115119),
+				},
+			})
+		}
+		if (u.pathname === '/api/checkout/cod') {
+			placed = JSON.parse(init.body)
+			const order = { id: 1, number: 'GC-1', status: 'confirmed', payment_status: 'pending', payment_provider: 'cod', currency: 'INR', total: inr(115119), address: {}, created_at: '', updated_at: '' }
+			return Response.json({ data: { order, payment: { kind: 'none', provider: 'cod' } } })
+		}
+		return Response.json({ data: [] })
+	})
+	try {
+		const quote = await svc.getQuote({ method: 'COD' })
+		assert.deepEqual(quote, {
+			subtotal: 1000,
+			shippingCharges: 49,
+			shippingMethod: 'Standard',
+			discount: 100,
+			coupon: { code: 'AUTO10', title: 'Ten percent', autoApplied: true, freeShipping: false },
+			tax: 162.19,
+			taxIncluded: false,
+			codCharges: 40,
+			total: 1151.19,
+		})
+		assert.deepEqual(asked[0], { cart: 'cart_q', country: 'IN', state: 'Maharashtra', shipping_rate_id: '7', method: 'cod', email: 'asha@example.com' })
+
+		await svc.checkoutCOD({ cartId: 'cart_q' })
+		assert.deepEqual(
+			{ cart: placed.cart_id, country: placed.address.country, state: placed.address.state, shipping_rate_id: String(placed.shipping_rate_id), method: 'cod', email: placed.email },
+			asked[0],
+			'the order is placed with exactly what was quoted',
+		)
+	} finally {
+		leaveBrowser()
+	}
+})
+
+test('a quote with no method chosen is a preview, and PAYPAL is quoted as the store’s hosted-page gateway', async () => {
+	quoteBrowser({ shippingAddress: shopper.shippingAddress })
+	const asked = []
+	const svc = new m.CheckoutService(async (url) => {
+		const u = new URL(String(url))
+		if (u.pathname === '/api/carts/cart_q') return quoteCart('cart@example.com')
+		if (u.pathname === '/api/checkout') {
+			return Response.json({ data: { payment_methods: ['cod', 'paddle'], methods: [{ code: 'cod', name: 'Cash on delivery' }, { code: 'paddle', name: 'Card' }], currency: 'INR' } })
+		}
+		if (u.pathname === '/api/checkout/quote') {
+			asked.push(Object.fromEntries(u.searchParams))
+			return Response.json({ data: { subtotal: inr(25000), shipping: inr(0), discount: null, tax: inr(0), tax_inclusive: true, payment_fee: inr(0), total: inr(25000) } })
+		}
+		return Response.json({ data: [] })
+	})
+	try {
+		const preview = await svc.getQuote()
+		assert.deepEqual(asked[0], { cart: 'cart_q', country: 'IN', state: 'Maharashtra', email: 'cart@example.com' }, 'no method and no delivery choice yet: neither is sent')
+		assert.deepEqual([preview.coupon, preview.discount, preview.taxIncluded, preview.total], [null, 0, true, 250])
+
+		await svc.getQuote({ method: 'PAYPAL' })
+		assert.equal(asked[1].method, 'paddle')
+	} finally {
+		leaveBrowser()
+	}
+})
+
+test('a free-delivery code is named on the quote, with nothing off the lines and nothing charged for delivery', async () => {
+	quoteBrowser(shopper)
+	const svc = new m.CheckoutService(async (url) => {
+		const u = new URL(String(url))
+		if (u.pathname === '/api/carts/cart_q') return quoteCart('asha@example.com')
+		return Response.json({
+			data: {
+				subtotal: inr(100000),
+				shipping: inr(0),
+				shipping_method: 'Express',
+				discount: { code: 'FREESHIP', title: 'Free delivery', auto_applied: true, amount: inr(0), free_shipping: true },
+				tax: inr(18000),
+				tax_inclusive: false,
+				payment_fee: inr(0),
+				total: inr(118000),
+			},
+		})
+	})
+	try {
+		const quote = await svc.getQuote({ method: 'RAZORPAY' })
+		assert.deepEqual(
+			[quote.coupon, quote.discount, quote.shippingCharges, quote.total],
+			[{ code: 'FREESHIP', title: 'Free delivery', autoApplied: true, freeShipping: true }, 0, 0, 1180],
+		)
+	} finally {
+		leaveBrowser()
+	}
+})
+
+test('there is nothing to quote before the address step, and the engine is not asked', async () => {
+	quoteBrowser({})
+	let calls = 0
+	const svc = new m.CheckoutService(async () => {
+		calls++
+		return Response.json({ data: {} })
+	})
+	try {
+		assert.equal(await svc.getQuote({ method: 'COD' }), null)
+		assert.equal(calls, 0)
+	} finally {
+		leaveBrowser()
+	}
+})
+
+test('a quote the engine refuses fails with the words and status placing the order would get', async () => {
+	quoteBrowser(shopper)
+	const svc = new m.CheckoutService(async (url) => {
+		const u = new URL(String(url))
+		if (u.pathname === '/api/carts/cart_q') return quoteCart('asha@example.com')
+		return Response.json({ error: { code: 'validation', message: 'this store does not deliver to IN' } }, { status: 422 })
+	})
+	try {
+		const quoted = await svc.getQuote({ method: 'COD' }).catch((e) => e)
+		const placed = await svc.checkoutCOD({ cartId: 'cart_q' }).catch((e) => e)
+		assert.deepEqual([quoted.name, quoted.status, quoted.message], ['GoCommerceError', 422, 'this store does not deliver to IN'])
+		assert.deepEqual([placed.status, placed.message], [quoted.status, quoted.message])
+	} finally {
+		leaveBrowser()
+	}
+})
+
+test('an automatic code is marked on the basket’s offers and in the coupon drawer, and an older engine marks none', async () => {
+	await withCart(async () => {
+		m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: undefined, baseDomain: undefined })
+		const rows = [
+			{ code: 'AUTO10', title: 'Ten percent', kind: 'percentage', value_bp: 1000, applies: true, amount: inr(10000), auto_apply: true },
+			{ code: 'TYPED15', title: 'Fifteen percent', kind: 'percentage', value_bp: 1500, applies: true, amount: inr(15000) },
+		]
+		const fetcher = async () => Response.json({ data: rows })
+		const offers = await new m.CartService(fetcher).getOffers()
+		assert.deepEqual(
+			offers.map((o) => [o.code, o.autoApply]),
+			[
+				['AUTO10', true],
+				['TYPED15', false],
+			],
+		)
+		const drawer = await new m.CouponService(fetcher).listCoupons()
+		assert.deepEqual(
+			drawer.data.map((c) => [c.code, c.autoApply]),
+			[
+				['AUTO10', true],
+				['TYPED15', false],
+			],
+		)
+	})
+})
