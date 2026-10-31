@@ -2885,13 +2885,27 @@ test("a closed store's message, and whether it takes a password, come from the e
 	plugins = []
 	assert.equal((await svc.getStoreByIdOrDomain()).closed, undefined)
 
+})
+
+test('a closed store stays closed when the engine cannot list its plugins for a while', async (t) => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test/', proxyPath: undefined, baseDomain: undefined })
+	let plugins = [{ key: 'store-close', title: 'Store closed', settings: { message: 'Launching soon', password: true } }]
+	const svc = new m.StoreService(async (url) => {
+		const path = new URL(String(url)).pathname
+		if (path === '/api/plugins')
+			return plugins ? Response.json({ data: plugins }) : Response.json({ error: { code: 'internal', message: 'boom' } }, { status: 500 })
+		return Response.json({ data: [] })
+	})
 	m.clearStoreCache()
+	t.mock.timers.enable({ apis: ['Date'], now: 1_800_000_000_000 })
+	assert.deepEqual((await svc.getStoreByIdOrDomain()).closed, { message: 'Launching soon', password: true })
+
 	plugins = null
-	assert.equal(
-		(await svc.getStoreByIdOrDomain()).closed,
-		undefined,
-		'an unreadable plugin list reads as open: the engine API is public (D170) and the pages fail with it',
-	)
+	t.mock.timers.tick(61_000)
+	assert.deepEqual((await svc.getStoreByIdOrDomain()).closed, { message: 'Launching soon', password: true }, 'a failed read keeps the last answer')
+
+	m.clearStoreCache()
+	assert.equal((await svc.getStoreByIdOrDomain()).closed, undefined, 'with nothing read yet, an unreadable list reads as open')
 })
 
 test("a typed password is trimmed and traded for a pass, carrying the shopper's address for the throttle", async () => {
@@ -2910,8 +2924,10 @@ test("a typed password is trimmed and traded for a pass, carrying the shopper's 
 			pass: { token: '1793000000.c2ln', expiresAt: new Date('2026-11-30T00:00:00Z') },
 		})
 		await svc.unlockStore('launch-day')
+		await svc.unlockStore('launch-day', { clientAddress: '203.0.113.9, 198.51.100.7' })
 		assert.deepEqual(sent, [
 			['/api/store/password', 'POST', '{"password":"launch-day"}', '203.0.113.9', 'acme'],
+			['/api/store/password', 'POST', '{"password":"launch-day"}', undefined, 'acme'],
 			['/api/store/password', 'POST', '{"password":"launch-day"}', undefined, 'acme'],
 		])
 	} finally {
