@@ -84,6 +84,8 @@ export type Product = {
 	media?: VariantImage[]
 	/** The sold count rounded down; absent unless the shop shows counts and it passed the threshold (D134). */
 	sold_at_least?: number
+	/** Sold only made to a shopper's design (D174); absent from an engine that predates the flag. */
+	designable?: boolean
 	options: ProductOption[] | null
 	variants: Variant[] | null
 	collections: { id: number; slug: string; title: string }[] | null
@@ -523,6 +525,8 @@ export type SearchDoc = {
 	price_max_minor: number
 	in_stock: boolean
 	skus: string[] | null
+	/** As on the product (D174), as of its last change or reindex; absent from an index built before the flag. */
+	designable?: boolean
 	updated_at: number
 }
 

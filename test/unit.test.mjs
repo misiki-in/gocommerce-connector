@@ -2568,6 +2568,127 @@ test('only a missing cart starts a new one; a missing design is refused and the 
 	})
 })
 
+function refusingCart(status, code, message) {
+	const posts = []
+	const svc = new m.CartService(async (url, init) => {
+		const path = new URL(String(url)).pathname
+		if (init?.method === 'POST') posts.push(path)
+		if (path === '/api/carts') return Response.json({ data: { id: 'cart2', status: 'open', currency: 'INR', line_items: [] } })
+		if (path === '/api/carts/cart1/line-items') return Response.json({ error: { code, message } }, { status })
+		if (path === '/api/carts/cart2/line-items')
+			return Response.json({ data: { id: 'cart2', status: 'open', currency: 'INR', line_items: [cartLine({ variant_id: 97 })] } })
+		return Response.json({ error: { code: 'not_found', message: 'no' } }, { status: 404 })
+	})
+	return { svc, posts }
+}
+
+test('a gone or checked-out cart is replaced, told by its code, or by its words from an older engine', async () => {
+	await withCart(async () => {
+		m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: undefined, baseDomain: undefined })
+		for (const [status, code, message] of [
+			[404, 'cart_not_found', 'this bag has expired'],
+			[409, 'cart_checked_out', 'this bag is an order now'],
+			[404, 'not_found', 'cart not found'],
+			[409, 'conflict', 'this cart has already been checked out'],
+		]) {
+			const { svc, posts } = refusingCart(status, code, message)
+			const cart = await svc.addToCart({ variantId: '97' })
+			assert.equal(cart.id, 'cart2', code)
+			assert.deepEqual(posts, ['/api/carts/cart1/line-items', '/api/carts', '/api/carts/cart2/line-items'], code)
+		}
+	})
+})
+
+test('design_required, or any refusal not about the cart itself, reaches the storefront with its code, and the bag stays', async () => {
+	await withCart(async () => {
+		m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: undefined, baseDomain: undefined })
+		for (const [code, message] of [
+			['design_required', 'this product is made to your design; design it before adding it to the bag'],
+			['design_required', 'design this case before it is checked out'],
+			['conflict', 'part of this basket is already being checked out; wait for it to finish'],
+		]) {
+			const { svc, posts } = refusingCart(409, code, message)
+			const err = await svc.addToCart({ variantId: '97' }).catch((e) => e)
+			assert.deepEqual([err instanceof m.GoCommerceError, err.status, err.code, err.message], [true, 409, code, message])
+			assert.deepEqual(posts, ['/api/carts/cart1/line-items'], message)
+		}
+	})
+})
+
+test('a product says whether it is made to a design, and one from an engine that does not say is unknown', () => {
+	assert.deepEqual(
+		[
+			m.toProduct(product({ designable: true })).designable,
+			m.toProduct(product({ designable: false })).designable,
+			m.toProduct(product()).designable,
+			m.toProduct(product({ designable: null })).designable,
+		],
+		[true, false, undefined, undefined],
+	)
+})
+
+test('a search hit says whether its product is made to a design, and a hit from an index that does not say is unknown', () => {
+	const hit = (over = {}) => ({ id: 7, slug: 'cotton-tee', title: 'Cotton tee', description: '', tags: null, currency: 'USD',
+		price_minor: 2500, price_max_minor: 2500, in_stock: true, skus: null, updated_at: 1790000000, ...over })
+	assert.deepEqual(
+		[
+			m.fromSearchDoc(hit({ designable: true })).designable,
+			m.fromSearchDoc(hit({ designable: false })).designable,
+			m.fromSearchDoc(hit()).designable,
+			m.fromSearchDoc(hit({ designable: null })).designable,
+		],
+		[true, false, undefined, undefined],
+	)
+})
+
+test('buy again says which past lines were designed and which products are made to a design', async () => {
+	const store = { gocommerce_token: 'sess_1' }
+	globalThis.window = {
+		location: { origin: 'http://storefront.test', hostname: 'storefront.test' },
+		localStorage: {
+			getItem: (k) => store[k] ?? null,
+			setItem: (k, v) => {
+				store[k] = v
+			},
+			removeItem: (k) => {
+				delete store[k]
+			},
+		},
+	}
+	globalThis.document = { cookie: '' }
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const line = (id, product_id, over = {}) => ({ id, product_id, variant_id: 90 + id, sku: `S${id}`, title: `Line ${id}`, quantity: 1,
+		shipped_quantity: 1, unit_price: money(49900, 'INR'), total: money(49900, 'INR'), ...over })
+	const lines = [
+		line(1, 41, { metadata: { design: { id: 'des_1', preview_url: '/media/stores/s1/prev.png' } } }),
+		line(2, 42),
+		line(3, 43),
+		line(4, 44),
+	]
+	const flags = { 41: { designable: true }, 42: { designable: true }, 43: { designable: false }, 44: {} }
+	try {
+		const svc = new m.OrderService(async (url) => {
+			const path = new URL(String(url)).pathname
+			if (path === '/x/identity/me/orders') return Response.json({ data: [{ id: 9, number: 'GC-000009', currency: 'INR', line_items: lines }] })
+			const id = Number(path.split('/').pop())
+			return Response.json({ data: product({ id, slug: `case-${id}`, ...flags[id] }) })
+		})
+		assert.deepEqual(
+			(await svc.buyAgain()).map((l) => [l.slug, l.designId, l.designable]),
+			[
+				['case-41', 'des_1', true],
+				['case-42', null, true],
+				['case-43', null, false],
+				['case-44', null, undefined],
+			],
+		)
+	} finally {
+		delete globalThis.window
+		delete globalThis.document
+		m.BaseService.setCredentials({ apiUrl: undefined })
+	}
+})
+
 test('a designed line, in the bag and on the order, carries its design and its picture through the proxy', async () => {
 	await withProxy(async () => {
 		const bagged = m.toCartLine(cartLine({ design_id: 'des_1', design_preview_url: '/media/stores/s1/prev.png' }))

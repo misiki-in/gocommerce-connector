@@ -189,6 +189,7 @@ export function toProduct(p: Product, extra: { categoryHierarchy?: { name: strin
 		freeGift: freeGiftOf(p),
 		// Counted by the engine, rounded down, and absent rather than zero.
 		soldAtLeast: typeof p.sold_at_least === 'number' && p.sold_at_least > 0 ? p.sold_at_least : null,
+		designable: typeof p.designable === 'boolean' ? p.designable : undefined,
 		// Product-level stock is what a card shows before a variant is picked:
 		// buyable when any live variant is, counted only where counting means
 		// something.
@@ -251,6 +252,7 @@ export function fromSearchDoc(d: SearchDoc) {
 		// built from it must not claim to count.
 		manageInventory: false,
 		allowBackorder: false,
+		designable: typeof d.designable === 'boolean' ? d.designable : undefined,
 		productTags: arr(d.tags).join(','),
 		category: d.category ? { name: d.category.split(' / ').pop() ?? d.category, slug: '' } : null,
 		vendor: d.vendor ? { businessName: d.vendor } : null,
