@@ -1,6 +1,6 @@
-import type { Cart, CheckoutResult } from '../engine'
+import type { Cart, CheckoutQuote, CheckoutResult } from '../engine'
 import { GoCommerceError, NotSupportedError } from '../errors'
-import { toEngineAddress, toOrder } from '../map'
+import { toCheckoutQuote, toEngineAddress, toOrder } from '../map'
 import { minorToMajor } from '../money'
 import {
 	cartExtras,
@@ -218,6 +218,46 @@ export class CheckoutService extends BaseService {
 		return { methods: options.methods ?? [], currency: options.currency }
 	}
 
+	/**
+	 * What checkout would charge for the cart now, by the storefront's method
+	 * code (`COD`, `RAZORPAY`, `PAYPAL`) or none yet (D185). Null until the
+	 * address step has stored an address: the engine needs its country.
+	 *
+	 * It sends what `place` sends: address, delivery choice and email, read the
+	 * same way, so the quote is the charge. A refusal is checkout's own: the
+	 * same GoCommerceError, with the same message, that placing the order would
+	 * raise now.
+	 */
+	async getQuote({ cartId, method = '' }: { cartId?: string; method?: string } = {}) {
+		const id = cartId || storedCartId()
+		if (!id || !cartExtras(id).shippingAddress) return null
+		const { extras, email, address } = await this.input(id)
+		const code = method.toLowerCase() === 'paypal' ? await this.redirectGateway() : method.toLowerCase()
+		const quote = await this.data<CheckoutQuote>('/api/checkout/quote', {
+			query: {
+				cart: id,
+				country: address.country,
+				state: address.state,
+				shipping_rate_id: extras.shippingRateId || undefined,
+				method: code || undefined,
+				email: email || undefined,
+			},
+		})
+		return toCheckoutQuote(quote)
+	}
+
+	/** The cart and what the address step stored for it, as checkout and its quote both send them. */
+	private async input(cartId?: string) {
+		const id = cartId || storedCartId()
+		if (!id) throw new GoCommerceError('Your bag is empty.', 400)
+		const extras = cartExtras(id)
+		const ship = extras.shippingAddress
+		if (!ship) throw new GoCommerceError('Add a delivery address first.', 400)
+		const cart = await this.data<Cart>(`/api/carts/${encodeURIComponent(id)}`)
+		const email = cart.email || (ship.email ? String(ship.email) : '')
+		return { id, extras, email, address: toEngineAddress(ship) }
+	}
+
 	private async redirectGateway(): Promise<string | undefined> {
 		const { methods } = await this.listMethods()
 		return methods.find((m) => REDIRECT_GATEWAYS.has(m.code))?.code
@@ -238,16 +278,8 @@ export class CheckoutService extends BaseService {
 		cartId?: string,
 		extra: { return_url?: string; payment_data?: Record<string, string>; metadata?: Record<string, unknown> } = {},
 	): Promise<CheckoutResult> {
-		const id = cartId || storedCartId()
-		if (!id) throw new GoCommerceError('Your bag is empty.', 400)
-		const extras = cartExtras(id)
-		const ship = extras.shippingAddress
-		if (!ship) throw new GoCommerceError('Add a delivery address first.', 400)
-
-		const cart = await this.data<Cart>(`/api/carts/${encodeURIComponent(id)}`)
-		const email = cart.email || (ship.email ? String(ship.email) : '')
+		const { id, extras, email, address } = await this.input(cartId)
 		if (!email) throw new GoCommerceError('Add an email address so we can send your receipt.', 400)
-		const address = toEngineAddress(ship)
 		const body = {
 			cart_id: id,
 			email,

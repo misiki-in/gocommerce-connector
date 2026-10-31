@@ -20,6 +20,7 @@ import type {
 	CartOffer,
 	CartLine,
 	Category,
+	CheckoutQuote,
 	CmsPage,
 	Collection,
 	Customer,
@@ -747,6 +748,27 @@ export function toCartOffer(o: CartOffer, currency: string) {
 		amount: o.amount ? toMajor(o.amount) : null,
 		remaining: o.remaining ? toMajor(o.remaining) : null,
 		reason: o.reason ?? '',
+		autoApply: !!o.auto_apply,
+	}
+}
+
+/**
+ * A checkout quote under the names `toOrder` gives the order it becomes, so a
+ * page shows the two the same way. The total is the engine's, never re-added
+ * here: the shown total and the charged one come from one sum.
+ */
+export function toCheckoutQuote(q: CheckoutQuote) {
+	const d = q.discount
+	return {
+		subtotal: toMajor(q.subtotal),
+		shippingCharges: toMajor(q.shipping),
+		shippingMethod: q.shipping_method ?? null,
+		discount: toMajor(d?.amount),
+		coupon: d ? { code: d.code, title: d.title, autoApplied: d.auto_applied, freeShipping: !!d.free_shipping } : null,
+		tax: toMajor(q.tax),
+		taxIncluded: q.tax_inclusive,
+		codCharges: toMajor(q.payment_fee),
+		total: toMajor(q.total),
 	}
 }
 
