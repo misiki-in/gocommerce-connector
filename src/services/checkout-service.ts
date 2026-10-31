@@ -270,7 +270,7 @@ export class CheckoutService extends BaseService {
 	}) {
 		const id = cartId || storedCartId()
 		if (!id) return
-		if (typeof total === 'number' && Number.isFinite(total)) this.expected.set(id, { total, onChange })
+		if (typeof total === 'number') this.expected.set(id, { total, onChange })
 		else this.expected.delete(id)
 	}
 
@@ -381,9 +381,7 @@ export const REDIRECT_GATEWAYS = new Set(['adyen', 'paddle', 'lemonsqueezy', 'cr
 
 const unsupported = (method: string, why: string) => new NotSupportedError('CheckoutService', method, why)
 
-type Quote = ReturnType<typeof toCheckoutQuote>
-
-type Expected = { total: number; onChange?: (quote: Quote, message: string) => void }
+type Expected = { total: number; onChange?: (quote: ReturnType<typeof toCheckoutQuote>, message: string) => void }
 
 /**
  * Checkout's refusal of a total that moved after the quote (D185): its figures now, as getQuote
@@ -391,9 +389,9 @@ type Expected = { total: number; onChange?: (quote: Quote, message: string) => v
  */
 function totalMoved(err: unknown, expected: Expected): unknown {
 	if (!(err instanceof GoCommerceError) || err.status !== 409) return err
-	const now = err.details as Partial<CheckoutQuote> | null
+	const now = err.details as CheckoutQuote | null
 	if (!now?.total) return err
-	const quote = toCheckoutQuote(now as CheckoutQuote)
+	const quote = toCheckoutQuote(now)
 	const message = `Your total changed to ${shopperAmount(quote.total, now.total.currency)}. Check the new total and confirm again.`
 	expected.onChange?.(quote, message)
 	return new GoCommerceError(message, 409, err.code, quote)
