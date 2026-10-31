@@ -10,6 +10,7 @@ type EngineLayoutCollection = {
 	slug: string
 	title: string
 	image?: string
+	description?: string
 }
 
 /** One section as the engine stores it, before the storefront maps anything. */
@@ -47,6 +48,7 @@ export type LayoutCollection = {
 	slug: string
 	link: string
 	image: string | null
+	description: string | null
 }
 
 /**
@@ -271,6 +273,7 @@ function toSection(s: EngineLayoutSection): HomeLayoutSection {
 			slug: c.slug,
 			link: `/collections/${c.slug}`,
 			image: mediaUrl(c.image) ?? null,
+			description: c.description || null,
 		}))
 	}
 	return out
