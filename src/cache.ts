@@ -29,7 +29,19 @@ export function remember<T>(key: string, load: () => Promise<T>, ttl = TTL_MS): 
 	return value
 }
 
+const known = new Map<string, unknown>()
+
+export function keep<T>(key: string, value: T): T {
+	known.set(key, value)
+	return value
+}
+
+export function recall<T>(key: string): T | undefined {
+	return known.get(key) as T | undefined
+}
+
 /** For tests, and for a storefront that has just changed something itself. */
 export function forgetAll(): void {
 	entries.clear()
+	known.clear()
 }

@@ -1,3 +1,4 @@
+import { keep, recall } from '../cache'
 import type { StorePassAnswer } from '../engine'
 import { GoCommerceError } from '../errors'
 import { readStaticStore } from '../static-store'
@@ -54,15 +55,19 @@ export class StoreService extends BaseService {
 		// a store the engine has never heard of. That page is a 404, not a render
 		// of the static record, so the storefront's 404 route can take it from here.
 		const store = this.store
-		const plugins = await this.facts.plugins().catch((err) => {
-			if (store && isStoreMissing(err)) {
-				throw new GoCommerceError(`store not found: no store "${store}" on this engine`, 404, 'store_not_found')
-			}
-			return undefined
-		})
-		const live = await this.live().catch(() => ({}))
+		const [plugins, live] = await Promise.all([
+			this.facts.plugins().catch((err) => {
+				if (store && isStoreMissing(err)) {
+					throw new GoCommerceError(`store not found: no store "${store}" on this engine`, 404, 'store_not_found')
+				}
+				return undefined
+			}),
+			this.live().catch(() => ({})),
+		])
+		const known = `${this.creds.apiUrl ?? ''}|${store ?? ''}|closed`
+		const closed = plugins ? keep(known, closedOf(plugins)) : recall<StoreClosed>(known)
 		// `id` must be truthy and stable: the storefront keys a cookie on it.
-		return { ...base, ...live, closed: closedOf(plugins), id: base.id || 'gocommerce' }
+		return { ...base, ...live, closed, id: base.id || 'gocommerce' }
 	}
 
 	async getStore(storeId?: string) {
@@ -135,11 +140,11 @@ export class StoreService extends BaseService {
 		const answer = await this.data<StorePassAnswer | null>('/api/store/password', {
 			method: 'POST',
 			body,
-			headers: clientAddress ? { 'X-Forwarded-For': clientAddress } : undefined,
+			headers: clientAddress && ONE_IP_ADDRESS.test(clientAddress) ? { 'X-Forwarded-For': clientAddress } : undefined,
 		})
 		const expiresAt = new Date(answer?.expires_at ?? NaN)
 		if (!answer?.token || Number.isNaN(expiresAt.getTime())) {
-			throw new GoCommerceError('The commerce engine answered a store pass without its token or expiry.', 200)
+			throw new GoCommerceError('The commerce engine answered a store pass without its token or expiry.', 502)
 		}
 		return { token: answer.token, expiresAt }
 	}
@@ -278,6 +283,8 @@ export type StorePass = { token: string; expiresAt: Date }
 
 export type StoreUnlock =
 	{ outcome: 'unlocked'; pass: StorePass } | { outcome: 'wrong' | 'throttled' | 'open' | 'unavailable' }
+
+const ONE_IP_ADDRESS = /^[\da-f.:]{2,45}$/i
 
 const UNLOCK_REFUSED: Partial<Record<number, 'wrong' | 'throttled' | 'open'>> = {
 	422: 'wrong',
