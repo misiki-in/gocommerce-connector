@@ -407,6 +407,9 @@ export type StoreProfile = {
 /** When the shop is open on one day: `day` is mon…sun, the times 24-hour HH:MM. */
 export type OpeningHours = { day: string; opens: string; closes: string }
 
+/** `POST /api/store/password` (D170): a closed store's pass, from its password or a pass still good. */
+export type StorePassAnswer = { token: string; expires_at: string }
+
 export type Vendor = {
 	id: number
 	slug: string
