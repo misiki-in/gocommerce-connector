@@ -1,3 +1,4 @@
+import { toMajor } from '../money'
 import { BaseService } from './base.service'
 import { StoreFacts } from './facts'
 import { REDIRECT_GATEWAYS } from './checkout-service'
@@ -51,6 +52,7 @@ export class PaymentMethodService extends BaseService {
 				title: m.name,
 				description: '',
 				img: drive(m.code)!.img ?? null,
+				fee: toMajor(m.fee),
 				rank: i,
 				active: true,
 				isActive: true,

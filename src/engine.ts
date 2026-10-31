@@ -263,6 +263,8 @@ export type Order = {
 	shipping: Money
 	shipping_method?: string
 	discount: Money
+	/** What the payment method added (D165): cash on delivery's extra charge. Absent on an engine before it. */
+	payment_fee?: Money
 	tax: Money
 	tax_inclusive: boolean
 	total: Money
@@ -290,7 +292,8 @@ export type CheckoutResult = { order: Order; payment: PaymentIntent }
 
 export type CheckoutOptions = {
 	payment_methods: string[]
-	methods: { code: string; name: string }[]
+	/** `fee` is what choosing the method adds to the order (D165); absent, it adds nothing. */
+	methods: { code: string; name: string; fee?: Money }[]
 	currency: string
 }
 

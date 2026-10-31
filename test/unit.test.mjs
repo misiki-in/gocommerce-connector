@@ -275,6 +275,57 @@ test('an order is its own parent, with lines as an array', () => {
 	assert.equal(o.total, 500)
 	assert.deepEqual(o.lineItems, [])
 	assert.equal(o.shippingAddress.firstName, 'Ada')
+	assert.equal(o.codCharges, 0, 'an engine before D165 sends no payment fee')
+})
+
+test("cash on delivery's extra charge is on its method before the choice and on the order after", async () => {
+	m.clearStoreCache()
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const svc = new m.PaymentMethodService(async () =>
+		Response.json({
+			data: {
+				payment_methods: ['cod', 'razorpay'],
+				methods: [
+					{ code: 'cod', name: 'Cash on delivery', fee: money(6000, 'INR') },
+					{ code: 'razorpay', name: 'Razorpay' },
+				],
+				currency: 'INR',
+			},
+		}),
+	)
+	const { data } = await svc.list({})
+	assert.deepEqual(
+		data.map((x) => [x.code, x.fee]),
+		[
+			['COD', 60],
+			['RAZORPAY', 0],
+		],
+	)
+
+	const o = m.toOrder({
+		id: 124,
+		number: 'GC-000124',
+		status: 'confirmed',
+		payment_status: 'pending',
+		payment_provider: 'cod',
+		currency: 'INR',
+		subtotal: money(1400, 'INR'),
+		shipping: money(4900, 'INR'),
+		discount: money(0, 'INR'),
+		payment_fee: money(6000, 'INR'),
+		tax: money(0, 'INR'),
+		tax_inclusive: true,
+		total: money(12300, 'INR'),
+		refunded: money(0, 'INR'),
+		email: 'a@example.com',
+		address: { name: 'Ada Lovelace', line1: '1 Way', city: 'Pune', postal_code: '411001', country: 'IN' },
+		line_items: null,
+		fulfillments: null,
+		created_at: '2026-10-31T00:00:00Z',
+		updated_at: '2026-10-31T00:00:00Z',
+	})
+	assert.equal(o.codCharges, 60)
+	assert.equal(o.total, 123)
 })
 
 // ---------------------------------------------------------- google reviews

@@ -610,7 +610,7 @@ export function toOrder(o: Order) {
 		taxIncluded: o.tax_inclusive,
 		total: toMajor(o.total),
 		refunded: toMajor(o.refunded),
-		codCharges: 0,
+		codCharges: toMajor(o.payment_fee),
 		coupon: code ? { code } : null,
 		userEmail: o.email,
 		email: o.email,
