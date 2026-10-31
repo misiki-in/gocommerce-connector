@@ -1,7 +1,7 @@
 import type { Cart, CheckoutQuote, CheckoutResult } from '../engine'
 import { GoCommerceError, NotSupportedError } from '../errors'
 import { toCheckoutQuote, toEngineAddress, toOrder } from '../map'
-import { minorToMajor } from '../money'
+import { minorToMajor, toMinor } from '../money'
 import {
 	cartExtras,
 	landingAttribution,
@@ -28,6 +28,8 @@ import { BaseService } from './base.service'
  * the order page shows `payment_status` once the webhook has landed.
  */
 export class CheckoutService extends BaseService {
+	private expected = new Map<string, Expected>()
+
 	/** Delivery options for the address on the cart: `{ data: [{ id, name, base_rate }] }`. */
 	async getShippingRates({ cartId }: { cartId?: string } = {}) {
 		const id = cartId || storedCartId()
@@ -251,6 +253,27 @@ export class CheckoutService extends BaseService {
 		}
 	}
 
+	/**
+	 * The total on screen as the shopper confirms, from getQuote, or null when nothing was quoted
+	 * (D185). Every order placed for the cart then carries it, and checkout refuses one whose own
+	 * total differs instead of charging it: `onChange` gets checkout's figures now and the sentence
+	 * the placing call fails with.
+	 */
+	expectTotal({
+		cartId,
+		total,
+		onChange,
+	}: {
+		cartId?: string
+		total?: number | null
+		onChange?: Expected['onChange']
+	}) {
+		const id = cartId || storedCartId()
+		if (!id) return
+		if (typeof total === 'number' && Number.isFinite(total)) this.expected.set(id, { total, onChange })
+		else this.expected.delete(id)
+	}
+
 	private async storedCheckout(cartId?: string) {
 		const id = cartId || storedCartId()
 		if (!id) throw new GoCommerceError('Your bag is empty.', 400)
@@ -259,7 +282,7 @@ export class CheckoutService extends BaseService {
 		if (!ship) throw new GoCommerceError('Add a delivery address first.', 400)
 		const cart = await this.data<Cart>(`/api/carts/${encodeURIComponent(id)}`)
 		const email = cart.email || (ship.email ? String(ship.email) : '')
-		return { id, extras, email, address: toEngineAddress(ship) }
+		return { id, extras, email, address: toEngineAddress(ship), currency: cart.currency }
 	}
 
 	private async redirectGateway(): Promise<string | undefined> {
@@ -275,14 +298,17 @@ export class CheckoutService extends BaseService {
 	 * created the order leaves the cart converted: only a retry under the same
 	 * key resumes that order, and without one the shopper is stuck. A changed
 	 * request — a different address, a different method — gets a new key, since
-	 * the engine refuses a key replayed with a different body.
+	 * the engine refuses a key replayed with a different body. The total the
+	 * shopper confirmed is left out of that sameness: checkout refuses a total
+	 * that moved before it records the key, so confirming the new total under
+	 * the same key still places one order.
 	 */
 	private async place(
 		code: string,
 		cartId?: string,
 		extra: { return_url?: string; payment_data?: Record<string, string>; metadata?: Record<string, unknown> } = {},
 	): Promise<CheckoutResult> {
-		const { id, extras, email, address } = await this.storedCheckout(cartId)
+		const { id, extras, email, address, currency } = await this.storedCheckout(cartId)
 		if (!email) throw new GoCommerceError('Add an email address so we can send your receipt.', 400)
 		const body = {
 			cart_id: id,
@@ -312,10 +338,17 @@ export class CheckoutService extends BaseService {
 			...(attribution ? { attribution } : {}),
 		}
 
+		const expected = this.expected.get(id)
+
 		const result = await this.data<CheckoutResult>(`/api/checkout/${encodeURIComponent(code)}`, {
 			method: 'POST',
-			body: Object.keys(metadata).length ? { ...body, metadata } : body,
+			body: {
+				...(Object.keys(metadata).length ? { ...body, metadata } : body),
+				...(expected ? { quoted_total_minor: toMinor(expected.total, currency) } : {}),
+			},
 			headers: { 'Idempotency-Key': key },
+		}).catch((err: unknown) => {
+			throw expected ? totalMoved(err, expected) : err
 		})
 
 		// The access token is returned once; a replayed response leaves it out,
@@ -347,6 +380,33 @@ export class CheckoutService extends BaseService {
 export const REDIRECT_GATEWAYS = new Set(['adyen', 'paddle', 'lemonsqueezy', 'creem', 'hyperswitch', 'revenuecat'])
 
 const unsupported = (method: string, why: string) => new NotSupportedError('CheckoutService', method, why)
+
+type Quote = ReturnType<typeof toCheckoutQuote>
+
+type Expected = { total: number; onChange?: (quote: Quote, message: string) => void }
+
+/**
+ * Checkout's refusal of a total that moved after the quote (D185): its figures now, as getQuote
+ * gives them, and the sentence a shopper reads. Any other failure passes as it came.
+ */
+function totalMoved(err: unknown, expected: Expected): unknown {
+	if (!(err instanceof GoCommerceError) || err.status !== 409) return err
+	const now = err.details as Partial<CheckoutQuote> | null
+	if (!now?.total) return err
+	const quote = toCheckoutQuote(now as CheckoutQuote)
+	const message = `Your total changed to ${shopperAmount(quote.total, now.total.currency)}. Check the new total and confirm again.`
+	expected.onChange?.(quote, message)
+	return new GoCommerceError(message, 409, err.code, quote)
+}
+
+/** `₹1,201`, `₹1,151.19`, `$12.50`: grouped the way the currency's shoppers read it, no `.00` on a whole amount. */
+function shopperAmount(amount: number, currency: string): string {
+	return new Intl.NumberFormat(currency === 'INR' ? 'en-IN' : 'en', {
+		style: 'currency',
+		currency,
+		...(Number.isInteger(amount) ? { minimumFractionDigits: 0 } : {}),
+	}).format(amount)
+}
 
 function newKey(): string {
 	const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto
