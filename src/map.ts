@@ -648,6 +648,13 @@ export function toOrder(o: Order) {
 			active: g.active,
 		})),
 		coupon: code ? { code } : null,
+		/** How the money arrived: for Pay by UPI, the 12-digit reference the shopper entered. */
+		paymentReference: o.payment_reference || null,
+		/**
+		 * Pay by UPI (D277), while the order is unpaid: `url` opens a UPI app with the amount and order
+		 * number filled in, `qrSvg` is the same link as a QR code drawn by the engine. Null otherwise.
+		 */
+		upi: o.upi ? { url: o.upi.url, qrSvg: o.upi.qr_svg, vpa: o.upi.vpa, payee: o.upi.payee ?? '' } : null,
 		userEmail: o.email,
 		email: o.email,
 		phone: o.phone ?? null,

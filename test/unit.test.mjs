@@ -1286,6 +1286,49 @@ test('a guest opens an order with its number and email, or the key in their emai
 	}
 })
 
+test('a Pay by UPI order carries its link and QR, and takes the UPI reference with the order key', async () => {
+	const store = {}
+	globalThis.window = {
+		location: { origin: 'http://storefront.test', hostname: 'storefront.test' },
+		localStorage: {
+			getItem: (k) => store[k] ?? null,
+			setItem: (k, v) => {
+				store[k] = v
+			},
+			removeItem: (k) => {
+				delete store[k]
+			},
+		},
+	}
+	globalThis.document = { cookie: '' }
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const seen = []
+	const upi = { url: 'upi://pay?pa=shop@upi&am=10.00&cu=INR&tn=GC-000060', qr_svg: '<svg></svg>', vpa: 'shop@upi', payee: 'Shop' }
+	const order = (over = {}) => ({
+		id: 8, number: 'GC-000060', status: 'confirmed', payment_status: 'pending', payment_provider: 'upi', currency: 'INR',
+		subtotal: { amount_minor: 1000, currency: 'INR' }, total: { amount_minor: 1000, currency: 'INR' },
+		email: 'a@example.com', lines: [], fulfillments: [], address: {}, created_at: '', updated_at: '', upi, ...over,
+	})
+	try {
+		const svc = new m.OrderService(async (url, init) => {
+			seen.push(`${init.method ?? 'GET'} ${url} ${init.body ?? ''}`)
+			if (url.endsWith('/upi-reference')) return Response.json({ data: order({ payment_reference: '412345678901' }) })
+			return Response.json({ data: order() })
+		})
+		const opened = await svc.openOrderWithKey({ orderNo: 'GC-000060', key: 'key_60' })
+		assert.deepEqual(opened.data[0].upi, { url: upi.url, qrSvg: '<svg></svg>', vpa: 'shop@upi', payee: 'Shop' })
+		assert.equal(opened.data[0].paymentReference, null)
+		const sent = await svc.submitUpiReference({ orderNo: 'GC-000060', reference: ' 412345678901 ' })
+		assert.equal(sent.paymentReference, '412345678901')
+		assert.equal(seen.at(-1), 'POST http://engine.test/api/orders/GC-000060/upi-reference {"token":"key_60","reference":"412345678901"}')
+		await assert.rejects(svc.submitUpiReference({ orderNo: 'GC-000099', reference: '412345678901' }), /Open this order again/)
+	} finally {
+		delete globalThis.window
+		delete globalThis.document
+		m.BaseService.setCredentials({ apiUrl: undefined })
+	}
+})
+
 test('a shopper signs in with a code texted to their phone', async () => {
 	const store = {}
 	globalThis.window = {

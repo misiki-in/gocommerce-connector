@@ -317,6 +317,10 @@ export type Order = {
 	gift_cards?: IssuedGiftCard[] | null
 	line_items: OrderLine[] | null
 	fulfillments: Fulfillment[] | null
+	/** How the money arrived: a gateway's id, or the UPI reference a shopper gave (D277). */
+	payment_reference?: string
+	/** On a Pay by UPI order still unpaid (D277): the upi:// link, its QR code as SVG and who is paid. */
+	upi?: { url: string; qr_svg: string; vpa: string; payee?: string } | null
 	access_token?: string
 	created_at: string
 	updated_at: string
