@@ -80,6 +80,8 @@ export type Product = {
 	seo_description: string
 	image_url?: string
 	media_count?: number
+	/** The picture after the lead, which a listing card shows on hover. */
+	hover_image_url?: string
 	/** The gallery, pictures and videos in order: on the public product only (D134). */
 	media?: VariantImage[]
 	/** The sold count rounded down; absent unless the shop shows counts and it passed the threshold (D134). */
