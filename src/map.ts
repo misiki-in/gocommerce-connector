@@ -67,6 +67,8 @@ export function productImages(p: Product): string[] {
 	}
 	// variantImages has already resolved its own; resolving twice would prefix twice.
 	push(mediaUrl(p.image_url))
+	// A listing has no media list, only the lead and the next picture for a card's hover.
+	push(mediaUrl(p.hover_image_url))
 	for (const m of arr(p.media)) if (m.kind === 'image') push(mediaUrl(m.url))
 	for (const v of arr(p.variants)) for (const url of variantImages(v)) push(url)
 	return out

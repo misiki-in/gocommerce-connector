@@ -3536,3 +3536,9 @@ test('a pass is checked without spending a try: the pass, null when refused, a t
 	assert.equal(await svc.checkStorePass(''), null)
 	assert.deepEqual(bodies, [], 'no token, no request')
 })
+
+test('a listed product carries its hover picture second, so a card can swap to it', () => {
+	const p = m.toProduct(product({ image_url: 'https://cdn.example/lead.jpg', hover_image_url: 'https://cdn.example/back.jpg', variants: [variant({ images: [], image: undefined })] }))
+	assert.deepEqual(p.imageList, ['https://cdn.example/lead.jpg', 'https://cdn.example/back.jpg'])
+	assert.equal(p.thumbnail, 'https://cdn.example/lead.jpg')
+})
