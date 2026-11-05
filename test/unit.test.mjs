@@ -781,6 +781,25 @@ test('a hosted-page gateway rides the storefront’s redirect flow under its own
 	assert.equal(data[1].img, '/payment/card.svg')
 })
 
+test('the engine’s PayPal rides the storefront’s redirect flow', async () => {
+	m.clearStoreCache()
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const svc = new m.PaymentMethodService(async () =>
+		Response.json({
+			data: {
+				payment_methods: ['paypal'],
+				methods: [{ code: 'paypal', name: 'PayPal' }],
+				currency: 'USD',
+			},
+		}),
+	)
+	const { data } = await svc.list({})
+	assert.deepEqual(
+		data.map((x) => [x.code, x.engineCode, x.name]),
+		[['PAYPAL', 'paypal', 'PayPal']],
+	)
+})
+
 test('a configured language is asked for on reads, never on writes', async () => {
 	const seen = []
 	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', language: 'fr' })
