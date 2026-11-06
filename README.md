@@ -137,7 +137,7 @@ down stays best-effort: the storefront renders from its static record.
 | You may also like | `/api/cross-sells?product_id=` — `productService.listCrossSells({ product })`, curated only; the bag's `/api/carts/{token}/cross-sells` — `cartService.listCrossSells()`, which includes the collection the shop chose for every basket (D134), falling back to the first item's related products |
 | the bag's offers and free delivery | `/api/carts/{token}/offers` — `cartService.getOffers()` and the coupon drawer's `couponService.listCoupons()`: only the codes the shop chose to show; `/api/carts/{token}/free-shipping` — `cartService.getFreeShipping()`, from the store's own rates, null when it cannot say |
 | delivery options | `/api/checkout/rates` |
-| payment methods | `/api/checkout` — cash on delivery, Razorpay, and the first hosted-page gateway (see below) |
+| payment methods | `/api/checkout` — cash on delivery, Razorpay, Cashfree on a rupee store, and the first hosted-page gateway (see below) |
 | place order | `POST /api/checkout/{code}` with an `Idempotency-Key` |
 | order lookup | `/api/orders/{number}?token=` (guest), `/x/identity/me/orders` (account) |
 | sign-in, sign-up, profile, password reset | `/x/identity/*` |
@@ -229,7 +229,8 @@ Each of these is a real gap, listed so nobody has to find it in production.
   non-numeric id.
 - **Payment.** The storefront drives a fixed list of gateway flows and passes
   none of them the gateway the shopper chose. Cash on delivery and Razorpay's
-  modal match engine gateways directly. The storefront's redirect flow (which it
+  modal match engine gateways directly, and so does Cashfree's on a rupee store,
+  under a neutral card icon. The storefront's redirect flow (which it
   reaches by the code `PAYPAL`) carries the store's first hosted-page gateway —
   PayPal, Adyen, Paddle, Lemon Squeezy, Creem, Hyperswitch or RevenueCat — under that
   gateway's own name and a neutral card icon; a second one cannot be told apart
