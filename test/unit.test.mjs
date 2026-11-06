@@ -3669,3 +3669,32 @@ test('Cashfree failures: no phone never reaches the engine, a refusal keeps its 
 		leaveBrowser()
 	}
 })
+
+test('closing Cashfree’s window and paying again sends the first request under its key, and a paid order is not reopened', async () => {
+	quoteBrowser(withPhone)
+	const bodies = []
+	const answer = (over = {}, session = 'session_1') =>
+		Response.json({ data: { order: { ...cashfreeOrder, ...over }, payment: { kind: 'client_action', provider: 'cashfree', reference: 'GC-5-ab12', client_data: { payment_session_id: session, order_id: 'GC-5-ab12', environment: 'sandbox' } } } })
+	let next = () => answer()
+	const svc = cashfreeEngine(() => next(), bodies)
+	try {
+		svc.expectTotal({ cartId: 'cart_q', total: 1151.19 })
+		await svc.checkoutCashfree({ cartId: 'cart_q' })
+
+		// The quote is gone by now: nothing the page does may change what the engine hashes.
+		svc.expectTotal({ cartId: 'cart_q', total: null })
+		assert.equal(await svc.getQuote({ cartId: 'cart_q', method: 'CASHFREE' }), null, 'the cart is converted, so it is not asked')
+		next = () => answer({ access_token: undefined }, 'session_2')
+		const again = await svc.checkoutCashfree({ cartId: 'cart_q' })
+		assert.equal(again.payment_session_id, 'session_2')
+		assert.equal(bodies[1].key, bodies[0].key)
+		assert.deepEqual(bodies[1].body, bodies[0].body)
+		assert.equal(bodies[1].body.quoted_total_minor, 115119)
+
+		next = () => answer({ access_token: undefined, payment_status: 'paid' })
+		await assert.rejects(svc.checkoutCashfree({ cartId: 'cart_q' }), { status: 409, code: 'already_paid' })
+		assert.equal(bodies[2].key, bodies[0].key)
+	} finally {
+		leaveBrowser()
+	}
+})
