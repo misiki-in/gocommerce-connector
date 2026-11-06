@@ -99,9 +99,9 @@ export class CheckoutService extends BaseService {
 
 	// The family's other gateway flows. GoCommerce's Stripe is a Payment
 	// Element (a client secret, not a hosted page) — `checkout('stripe')` returns
-	// that secret for a storefront that mounts the element. Cashfree, PhonePe and
-	// Affirm are not engine gateways at all. paymentMethodService never offers
-	// these codes, so they are reached only by a storefront that hard-codes one.
+	// that secret for a storefront that mounts the element. PhonePe and Affirm are
+	// not engine gateways at all. paymentMethodService never offers these codes,
+	// so they are reached only by a storefront that hard-codes one.
 	async checkoutStripe(): Promise<never> {
 		throw unsupported(
 			'checkoutStripe',
@@ -124,7 +124,7 @@ export class CheckoutService extends BaseService {
 		const gateway = await this.redirectGateway()
 		if (!gateway) throw unsupported('checkoutPaypal', 'this store has no hosted-page payment gateway switched on')
 		const id = cartId || storedCartId() || ''
-		const back = origin ? `${origin.replace(/\/+$/, '')}/checkout/success?cart_id=${encodeURIComponent(id)}` : undefined
+		const back = origin ? successUrl(origin, id) : undefined
 		const result = await this.place(gateway, id, back ? { return_url: back } : {})
 		const url = result.payment.client_data?.url
 		if (!url) throw new GoCommerceError('The payment page did not open. Please try again.', 502)
@@ -141,11 +141,44 @@ export class CheckoutService extends BaseService {
 	}: { order_no?: string; token?: string; PayerID?: string; storeId?: string } = {}) {
 		return { order_no: order_no ?? null, status: 'processing' }
 	}
-	async checkoutCashfree(): Promise<never> {
-		throw unsupported('checkoutCashfree', 'the engine has no Cashfree gateway')
+
+	/**
+	 * Cashfree's JavaScript checkout. The engine has already created the Cashfree
+	 * order; this hands the storefront the session its modal opens. `order_no` is
+	 * the store's number, which the storefront prefers over `order_id`, Cashfree's.
+	 *
+	 * The return URL is for the one case the modal cannot open, an in-app browser,
+	 * when Cashfree sends the shopper back to it instead. Only https is sent: every
+	 * Cashfree example is, and a plain-http dev origin should not risk the order.
+	 */
+	async checkoutCashfree({ cartId, origin }: { cartId?: string; email?: string; origin?: string } = {}) {
+		const { id, extras, address } = await this.storedCheckout(cartId)
+		// The engine would create the order, reserving its stock, and only then
+		// find that Cashfree cannot be asked without a phone number.
+		if (!extras.phone && !address.phone) throw new GoCommerceError('Add a phone number to pay with Cashfree.', 400)
+		const result = await this.place('cashfree', id, origin?.startsWith('https:') ? { return_url: successUrl(origin, id) } : {})
+		const data = result.payment.client_data ?? {}
+		if (result.payment.kind !== 'client_action' || !data.payment_session_id) {
+			throw new GoCommerceError('The payment page did not open. Please try again.', 502)
+		}
+		cashfreeEnvironment = data.environment
+		return {
+			order_no: result.order.number,
+			payment_session_id: data.payment_session_id,
+			order_id: data.order_id,
+			environment: data.environment,
+		}
 	}
-	async captureCashfreePayment(): Promise<never> {
-		throw unsupported('captureCashfreePayment', 'the engine has no Cashfree gateway')
+
+	/**
+	 * Nothing to capture: the signed webhook tells the engine the order is paid.
+	 * The storefront calls this on the server, after Cashfree's modal resolves
+	 * with any outcome, so it can neither claim the payment nor, without the
+	 * browser's order token, check it. Answering sends the shopper to the success
+	 * page; throwing would call a payment that may have gone through failed.
+	 */
+	async captureCashfreePayment({ order_no }: { order_no?: string } = {}) {
+		return { order_no: order_no ?? null, status: 'processing' }
 	}
 	async checkoutPhonepe(): Promise<never> {
 		throw unsupported('checkoutPhonepe', 'the engine has no PhonePe gateway')
@@ -222,7 +255,7 @@ export class CheckoutService extends BaseService {
 
 	/**
 	 * What checkout would charge for the cart now, by the storefront's method
-	 * code (`COD`, `RAZORPAY`, `PAYPAL`) or none yet (D185). Null until the
+	 * code (`COD`, `RAZORPAY`, `CASHFREE`, `PAYPAL`) or none yet (D185). Null until the
 	 * address step has stored an address, and null from an engine before D185.
 	 *
 	 * A refusal is checkout's own: the same GoCommerceError, with the same
@@ -382,6 +415,23 @@ export class CheckoutService extends BaseService {
 
 /** The engine's gateways that take payment on their own hosted page. */
 export const REDIRECT_GATEWAYS = new Set(['paypal', 'adyen', 'paddle', 'lemonsqueezy', 'creem', 'hyperswitch', 'revenuecat'])
+
+/**
+ * Whether the Cashfree session last opened here is a sandbox one. The storefront
+ * picks the SDK's mode from the listed method's `isTest`, not from what
+ * checkoutCashfree returns, and the engine names the environment only there, so
+ * paymentMethodService exposes this as a getter that the storefront reads after
+ * the call. A session opened in the wrong mode fails. Production, the engine's
+ * default, until told otherwise.
+ *
+ * ponytail: relies on Svelte's $state proxy leaving accessors alone; drop it when
+ * the core package reads `environment` from checkoutCashfree's result.
+ */
+let cashfreeEnvironment: string | undefined
+export const cashfreeIsTest = () => cashfreeEnvironment === 'sandbox'
+
+const successUrl = (origin: string, cartId: string) =>
+	`${origin.replace(/\/+$/, '')}/checkout/success?cart_id=${encodeURIComponent(cartId)}`
 
 const unsupported = (method: string, why: string) => new NotSupportedError('CheckoutService', method, why)
 
