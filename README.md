@@ -239,9 +239,9 @@ Each of these is a real gap, listed so nobody has to find it in production.
   reported once in the console, and every one is reachable through
   `checkoutService.checkout(code)` for a storefront that drives its own payment
   UI. Payment is confirmed by the gateway's webhook to the engine; the order
-  shows `paymentStatus` once it lands. Reading a Paystack or Flutterwave order this
-  browser placed also asks the gateway while it is unpaid, since their webhooks are
-  set up by hand and can be missing.
+  shows `paymentStatus` once it lands. Reading a Paystack, Flutterwave, Cashfree or PayPal
+  order this browser placed also asks the gateway while it is unpaid, since their
+  webhooks are set up by hand and can be missing.
 - **Filters on an older engine.** Listing filters and their counts (tags,
   vendor, product type, category attributes, price) need an engine that counts
   them (`GET /api/products?facets=1`, D130). Against an older one the filter

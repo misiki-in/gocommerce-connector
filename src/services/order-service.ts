@@ -9,10 +9,13 @@ import { BaseService, emptyPage, mediaUrl, toPage } from './base.service'
  * The gateways whose webhook a store sets up by hand, so it can be missing. An order still pending
  * is later cancelled with no word to the gateway, and a paid one would go with it, so reading an
  * order this browser placed asks the gateway too. The engine limits how often it passes that on.
+ * PayPal's route also captures a payment the shopper approved, which is the webhook's job otherwise.
  */
 const VERIFY: Record<string, (reference: string) => string> = {
 	paystack: (r) => `/x/payments-paystack/transactions/${r}/verify`,
 	flutterwave: (r) => `/x/payments-flutterwave/transactions/${r}/verify`,
+	cashfree: (r) => `/x/payments-cashfree/orders/${r}/verify`,
+	paypal: (r) => `/x/payments-paypal/orders/${r}/capture`,
 }
 
 /**
