@@ -785,6 +785,29 @@ test('a hosted-page gateway rides the storefront’s redirect flow under its own
 	assert.equal(data[2].redirects, true)
 })
 
+test('Paystack and Flutterwave are offered as hosted-page gateways', async () => {
+	m.clearStoreCache()
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const svc = new m.PaymentMethodService(async () =>
+		Response.json({
+			data: {
+				methods: [
+					{ code: 'paystack', name: 'Paystack' },
+					{ code: 'flutterwave', name: 'Flutterwave' },
+				],
+				currency: 'NGN',
+			},
+		}),
+	)
+	const { data } = await svc.list({})
+	assert.deepEqual(
+		data.map((x) => [x.code, x.engineCode, x.redirects]),
+		[
+			['PAYPAL', 'paystack', undefined],
+			['FLUTTERWAVE', 'flutterwave', true],
+		],
+	)
+})
 test('the engine’s PayPal rides the storefront’s redirect flow', async () => {
 	m.clearStoreCache()
 	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
