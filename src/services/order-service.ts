@@ -6,6 +6,16 @@ import { inBrowser, placedOrder, placedOrderForCart, rememberOrder, sessionToken
 import { BaseService, emptyPage, mediaUrl, toPage } from './base.service'
 
 /**
+ * The gateways whose webhook a store sets up by hand, so it can be missing. An order still pending
+ * is later cancelled with no word to the gateway, and a paid one would go with it, so reading an
+ * order this browser placed asks the gateway too. The engine limits how often it passes that on.
+ */
+const VERIFY: Record<string, (reference: string) => string> = {
+	paystack: (r) => `/x/payments-paystack/transactions/${r}/verify`,
+	flutterwave: (r) => `/x/payments-flutterwave/transactions/${r}/verify`,
+}
+
+/**
  * Orders, read back two ways.
  *
  * A guest's order is read with the access token checkout returned, which this
@@ -46,9 +56,15 @@ export class OrderService extends BaseService {
 	async getOrder(number: string) {
 		const kept = placedOrder(number)
 		if (kept) {
-			return toOrder(
-				await this.data<Order>(`/api/orders/${encodeURIComponent(number)}`, { query: { token: kept.token } }),
-			)
+			const read = () => this.data<Order>(`/api/orders/${encodeURIComponent(number)}`, { query: { token: kept.token } })
+			const order = await read()
+			const verify = VERIFY[order.payment_provider]
+			if (!verify || !kept.reference || !['pending', 'failed'].includes(order.payment_status)) return toOrder(order)
+			// A failed check leaves the order as it read; the webhook may still settle it.
+			const checked = await this.data<{ payment_status: string }>(verify(encodeURIComponent(kept.reference)), {
+				method: 'POST',
+			}).catch(() => null)
+			return toOrder(checked && checked.payment_status !== order.payment_status ? await read() : order)
 		}
 		if (sessionToken()) {
 			return toOrder(await this.data<Order>(`/x/identity/me/orders/${encodeURIComponent(number)}`, { auth: true }))

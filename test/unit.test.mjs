@@ -785,6 +785,47 @@ test('a hosted-page gateway rides the storefront’s redirect flow under its own
 	assert.equal(data[2].redirects, true)
 })
 
+test('reading a Paystack or Flutterwave order asks the gateway while it is unpaid, and only then', async () => {
+	const kept = { gocommerce_orders: JSON.stringify([{ number: 'GC-1', token: 't', cartId: 'c', reference: 'ref/1' }]) }
+	globalThis.window = {
+		location: { origin: 'http://storefront.test', hostname: 'storefront.test' },
+		localStorage: { getItem: (k) => kept[k] ?? null, setItem() {}, removeItem() {} },
+	}
+	globalThis.document = { cookie: '' }
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const order = {
+		id: 1, number: 'GC-1', status: 'pending', currency: 'NGN',
+		subtotal: { amount_minor: 1000, currency: 'NGN' }, total: { amount_minor: 1000, currency: 'NGN' },
+		email: 'a@example.com', lines: [], fulfillments: [], address: {}, created_at: '', updated_at: '',
+	}
+	const run = async (provider, status, answer) => {
+		const seen = []
+		let current = status
+		const svc = new m.OrderService(async (url, init) => {
+			seen.push(`${init.method ?? 'GET'} ${url.replace('http://engine.test', '').split('?')[0]}`)
+			if (init.method !== 'POST') return Response.json({ data: { ...order, payment_provider: provider, payment_status: current } })
+			if (answer === 500) return Response.json({ error: { code: 'x', message: 'x' } }, { status: 500 })
+			current = answer
+			return Response.json({ data: { order: 'GC-1', payment_status: answer } })
+		})
+		return { seen, read: await svc.getOrder('GC-1') }
+	}
+	const GET = 'GET /api/orders/GC-1'
+	try {
+		let r = await run('paystack', 'pending', 'paid')
+		assert.deepEqual(r.seen, [GET, 'POST /x/payments-paystack/transactions/ref%2F1/verify', GET])
+		assert.equal(r.read.paymentStatus, (await run('cod', 'paid')).read.paymentStatus, 'the paid order is what comes back')
+		r = await run('flutterwave', 'pending', 'pending')
+		assert.deepEqual(r.seen, [GET, 'POST /x/payments-flutterwave/transactions/ref%2F1/verify'])
+		r = await run('paystack', 'pending', 500)
+		assert.equal(r.seen.length, 2, 'a failed check still answers with the order')
+		assert.deepEqual((await run('paystack', 'paid')).seen, [GET])
+		assert.deepEqual((await run('adyen', 'pending')).seen, [GET])
+	} finally {
+		delete globalThis.window
+		delete globalThis.document
+	}
+})
 test('Paystack and Flutterwave are offered as hosted-page gateways', async () => {
 	m.clearStoreCache()
 	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
