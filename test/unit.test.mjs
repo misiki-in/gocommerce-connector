@@ -518,6 +518,7 @@ test('every service the storefront imports by name is exported', () => {
 		'wishlistService',
 		'reviewService',
 		'googleReviewService',
+		'showcaseService',
 		'GoogleReviewService',
 		'customizerService',
 		'CustomizerService',
@@ -829,6 +830,35 @@ test('reading an order on a gateway with a check asks it while the order is unpa
 		delete globalThis.window
 		delete globalThis.document
 	}
+})
+test('a store’s videos are listed for a place, and a store without them has none', async () => {
+	m.clearStoreCache()
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const seen = []
+	let answer = () =>
+		Response.json({
+			data: [{
+				slug: 'ring', title: 'The ring', description: '', label: 'Video',
+				video: { provider: 'youtube', embed_url: 'https://e', watch_url: 'https://w', thumbnail_url: 'https://t' },
+			}],
+		})
+	const svc = new m.ShowcaseService(async (url, init) => {
+		const path = url.replace('http://engine.test', '')
+		if (path.startsWith('/api/plugins')) return Response.json({ data: [{ key: 'showcases' }] })
+		seen.push(`${init.method ?? 'GET'} ${path} ${init.body ?? ''}`.trim())
+		return answer()
+	})
+	assert.deepEqual(await svc.list({ product: 7 }), [{
+		slug: 'ring', title: 'The ring', description: '', label: 'Video', provider: 'youtube',
+		embedUrl: 'https://e', watchUrl: 'https://w', thumbnailUrl: 'https://t',
+	}])
+	assert.equal(seen.pop(), 'GET /x/showcases?product=7')
+	await svc.list({ on: 'home' })
+	assert.equal(seen.pop(), 'GET /x/showcases?on=home')
+	answer = () => Response.json({ error: { code: 'not_found', message: 'none' } }, { status: 404 })
+	assert.deepEqual(await svc.list({ collection: 3 }), [])
+	await svc.recordView('ring')
+	assert.equal(seen.pop(), 'POST /x/showcases/ring/events {"type":"view"}')
 })
 test('Paystack and Flutterwave are offered as hosted-page gateways', async () => {
 	m.clearStoreCache()

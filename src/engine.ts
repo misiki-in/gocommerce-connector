@@ -318,6 +318,15 @@ export type ShippingRate = { rate_id: number; name: string; price: Money; zone_i
 
 export type Plugin = { key: string; title: string; settings: Record<string, unknown> }
 
+/** One row of `GET /x/showcases` (ext/showcases). */
+export type PublicShowcase = {
+	slug: string
+	title: string
+	description: string
+	label: string
+	video: { provider: string; embed_url: string; watch_url: string; thumbnail_url?: string }
+}
+
 /** `GET /x/google-reviews/place` (ext/google-reviews): Google's answer just now, never stored. */
 export type GooglePlace = {
 	rating: number
