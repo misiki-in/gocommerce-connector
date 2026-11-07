@@ -814,7 +814,7 @@ test('reading an order on a gateway with a check asks it while the order is unpa
 	const GET = 'GET /api/orders/GC-1'
 	try {
 		let r = await run('paystack', 'pending', 'paid')
-		assert.deepEqual(r.seen, [GET, 'POST /x/payments-paystack/transactions/ref%2F1/verify', GET])
+		assert.deepEqual(r.seen, [GET, 'POST /x/payments-paystack/transactions/ref%2F1/verify', GET, 'GET /x/invoices/GC-1'])
 		assert.equal(r.read.paymentStatus, (await run('cod', 'paid')).read.paymentStatus, 'the paid order is what comes back')
 		r = await run('flutterwave', 'pending', 'pending')
 		assert.deepEqual(r.seen, [GET, 'POST /x/payments-flutterwave/transactions/ref%2F1/verify'])
@@ -824,7 +824,7 @@ test('reading an order on a gateway with a check asks it while the order is unpa
 		assert.deepEqual(r.seen, [GET, 'POST /x/payments-paypal/orders/ref%2F1/capture'])
 		r = await run('paystack', 'pending', 500)
 		assert.equal(r.seen.length, 2, 'a failed check still answers with the order')
-		assert.deepEqual((await run('paystack', 'paid')).seen, [GET])
+		assert.deepEqual((await run('paystack', 'paid')).seen, [GET, 'GET /x/invoices/GC-1'])
 		assert.deepEqual((await run('adyen', 'pending')).seen, [GET])
 	} finally {
 		delete globalThis.window
@@ -859,6 +859,58 @@ test('a store’s videos are listed for a place, and a store without them has no
 	assert.deepEqual(await svc.list({ collection: 3 }), [])
 	await svc.recordView('ring')
 	assert.equal(seen.pop(), 'POST /x/showcases/ring/events {"type":"view"}')
+})
+test('the home page carries the store’s banners, with or without a page record', async () => {
+	m.clearStoreCache()
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const banners = {
+		slides: [{ id: 1, title: 'Sale', link: '/sale', image_url: 'https://cdn/d.jpg', mobile_image_url: 'https://cdn/m.jpg' }],
+		grids: [{ title: 'Shop', banners: [{ id: 2, title: 'Rings', link: '/rings', image_url: 'https://cdn/r.jpg' }] }],
+	}
+	const none = () => Response.json({ error: { code: 'not_found', message: 'none' } }, { status: 404 })
+	let answers = { banners: () => Response.json({ data: banners }), cms: none }
+	const svc = new m.PageService(async (url) => (url.includes('/x/banners') ? answers.banners() : answers.cms()))
+	const page = await svc.getOne('home')
+	assert.deepEqual(page.desktopBanners, [{ url: 'https://cdn/d.jpg', link: '/sale', title: 'Sale' }])
+	assert.equal(page.mobileBanners[0].url, 'https://cdn/m.jpg')
+	assert.equal(page.sections[0].title, 'Shop')
+	assert.equal(page.sections[0].banners[0].link, '/rings')
+	assert.deepEqual(page.sections.map((s) => s.screenType), ['desktop', 'mobile'])
+	answers = { banners: none, cms: none }
+	await assert.rejects(svc.getOne('home'), (e) => e.status === 404, 'nothing at all is still the page’s 404')
+})
+test('a product enquiry goes to its own route, naming the product', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const seen = []
+	const svc = new m.EnquiryService(async (url, init) => {
+		seen.push([url.replace('http://engine.test', ''), JSON.parse(init.body)])
+		return Response.json({ data: { status: 'new' } }, { status: 201 })
+	})
+	await svc.create({ name: 'A', email: 'a@example.com', phone: '1', message: 'Price?', productId: '7' })
+	assert.deepEqual(seen.pop(), ['/x/contact/enquiries', { product_id: 7, name: 'A', email: 'a@example.com', phone: '1', body: 'Price?' }])
+	await svc.create({ name: 'A', email: 'a@example.com', message: 'Hello' })
+	assert.equal(seen.pop()[0], '/x/contact/messages')
+})
+test('reads ask in the language the shopper chose, and a bad cookie is ignored', async () => {
+	m.clearStoreCache()
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', language: undefined })
+	globalThis.window = { location: { origin: 'http://s.test', hostname: 's.test' }, localStorage: { getItem: () => null, setItem() {}, removeItem() {} } }
+	const seen = []
+	const svc = new m.PageService(async (url) => {
+		seen.push(url)
+		return Response.json({ data: { slug: 'about', title: 'About', body: '' } })
+	})
+	try {
+		globalThis.document = { cookie: 'x=1; gc_lang=hi' }
+		await svc.getOne('about')
+		assert.match(seen.pop(), /[?&]lang=hi\b/)
+		globalThis.document = { cookie: 'gc_lang=<script>' }
+		await svc.getOne('about')
+		assert.doesNotMatch(seen.pop(), /lang=/)
+	} finally {
+		delete globalThis.window
+		delete globalThis.document
+	}
 })
 test('Paystack and Flutterwave are offered as hosted-page gateways', async () => {
 	m.clearStoreCache()

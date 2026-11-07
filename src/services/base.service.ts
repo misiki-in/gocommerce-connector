@@ -77,6 +77,14 @@ export class BaseService {
 	 * one credentials object) across every concurrent request and each may be
 	 * for a different host.
 	 */
+	protected get language(): string | undefined {
+		const chosen =
+			typeof document !== 'undefined'
+				? /(?:^|;\s*)gc_lang=([^;]+)/.exec(document.cookie)?.[1]
+				: requestLanguage?.()
+		return chosen && LANGUAGE_TAG.test(chosen) ? chosen : this.creds.language
+	}
+
 	protected get store(): string | undefined {
 		const { baseDomain, store } = this.creds
 		const host = typeof window !== 'undefined' ? window.location?.hostname : requestHost?.()
@@ -117,7 +125,7 @@ export class BaseService {
 	protected async engine<T>(path: string, req: EngineRequest = {}): Promise<Envelope<T>> {
 		// A language only means something on a read; a write's answer is a cart
 		// or an order, whose lines keep the words they were bought under.
-		const lang = (req.method ?? 'GET') === 'GET' ? this.creds.language : undefined
+		const lang = (req.method ?? 'GET') === 'GET' ? this.language : undefined
 		const url = this.engineURL(path, lang ? { lang, ...req.query } : req.query)
 		const headers: Record<string, string> = { Accept: 'application/json', ...req.headers }
 		// A form goes as it is: fetch writes its multipart Content-Type, boundary included.
@@ -247,6 +255,16 @@ export class BaseService {
 }
 
 let requestHost: (() => string | undefined) | undefined
+let requestLanguage: (() => string | undefined) | undefined
+const LANGUAGE_TAG = /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/
+
+/**
+ * Where the server learns the language the shopper chose, from the `gc_lang` cookie the browser
+ * reads for itself. Per call, as for the host, because one process serves every shopper at once.
+ */
+export function setRequestLanguage(fn: () => string | undefined): void {
+	requestLanguage = fn
+}
 
 /**
  * Where the server learns the current request's host, for `baseDomain`. A

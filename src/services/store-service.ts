@@ -200,8 +200,18 @@ export class StoreService extends BaseService {
 				includesTax: profile?.prices_include_tax,
 			},
 			language: ready.language,
+			languages: profile?.languages ?? [ready.language],
 			plugins: {
 				...basePlugins,
+				// In enquiry mode the button replaces Add to bag; the contact module's question goes beside it.
+				enquiryMode: {
+					...basePlugins.enquiryMode,
+					...flag(plugins.has('enquiry-mode')),
+					buttonText: plugins.get('enquiry-mode')?.settings?.button,
+				},
+				productEnquiries: flag(
+					plugins.has('contact-form') && String(plugins.get('contact-form')?.settings?.enquiries) !== 'false',
+				),
 				// Features this connector serves from a module: on exactly when the
 				// module is installed and switched on, whatever the static record says.
 				isWishlist: { ...basePlugins.isWishlist, ...flag(plugins.has('wishlist')) },

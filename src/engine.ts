@@ -318,6 +318,13 @@ export type ShippingRate = { rate_id: number; name: string; price: Money; zone_i
 
 export type Plugin = { key: string; title: string; settings: Record<string, unknown> }
 
+/** `GET /x/banners` (ext/banners): a page's slides and its grids of tiles. */
+export type PublicBanner = { id: number; title: string; link: string; image_url: string; mobile_image_url?: string }
+export type PublicBanners = {
+	slides?: PublicBanner[] | null
+	grids?: { title: string; banners?: PublicBanner[] | null }[] | null
+}
+
 /** One row of `GET /x/showcases` (ext/showcases). */
 export type PublicShowcase = {
 	slug: string
@@ -410,6 +417,7 @@ export type StoreProfile = {
 	phone: string
 	support_url: string
 	language: string
+	languages?: string[]
 	/** Whether the store's prices include tax (D177); absent on an engine before it. */
 	prices_include_tax?: boolean
 	/** Where the engine serves this store's pictures resized (D139); absent on an engine before it. */

@@ -66,12 +66,17 @@ export class EnquiryService extends ContactService {
 		message: string
 		productId?: string
 	}) {
-		return this.submitContactUsForm({
-			name,
-			email,
-			phone,
-			subject: productId ? `Enquiry about product ${productId}` : 'Enquiry',
-			message,
+		if (!productId) return this.submitContactUsForm({ name, email, phone, subject: 'Enquiry', message })
+		// Its own route, so the inbox marks it an enquiry and names the product.
+		return this.data<{ status: string }>('/x/contact/enquiries', {
+			method: 'POST',
+			body: {
+				product_id: Number(productId),
+				name: String(name ?? ''),
+				email: String(email ?? ''),
+				...(phone ? { phone: String(phone) } : {}),
+				body: String(message ?? ''),
+			},
 		})
 	}
 }

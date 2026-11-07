@@ -62,21 +62,40 @@ export class OrderService extends BaseService {
 			const read = () => this.data<Order>(`/api/orders/${encodeURIComponent(number)}`, { query: { token: kept.token } })
 			const order = await read()
 			const verify = VERIFY[order.payment_provider]
-			if (!verify || !kept.reference || !['pending', 'failed'].includes(order.payment_status)) return toOrder(order)
+			if (!verify || !kept.reference || !['pending', 'failed'].includes(order.payment_status)) {
+				return this.withInvoice(order, kept.token)
+			}
 			// A failed check leaves the order as it read; the webhook may still settle it.
 			const checked = await this.data<{ payment_status: string }>(verify(encodeURIComponent(kept.reference)), {
 				method: 'POST',
 			}).catch(() => null)
-			return toOrder(checked && checked.payment_status !== order.payment_status ? await read() : order)
+			return this.withInvoice(checked && checked.payment_status !== order.payment_status ? await read() : order, kept.token)
 		}
 		if (sessionToken()) {
-			return toOrder(await this.data<Order>(`/x/identity/me/orders/${encodeURIComponent(number)}`, { auth: true }))
+			const order = await this.data<Order>(`/x/identity/me/orders/${encodeURIComponent(number)}`, { auth: true })
+			return this.withInvoice(order, order.access_token)
 		}
 		throw new GoCommerceError(
 			inBrowser() ? 'Sign in to see this order, or open it from the browser that placed it.' : 'order not found',
 			404,
 			'not_found',
 		)
+	}
+
+	/**
+	 * The order with a link to its invoice, once one has been issued. Issued on payment by a module a
+	 * store may not have, so an unpaid order is not asked about and any answer but the invoice is none.
+	 */
+	private async withInvoice(order: Order, token?: string) {
+		const mapped = toOrder(order)
+		if (!token || ['pending', 'failed'].includes(order.payment_status)) return mapped
+		const path = `/x/invoices/${encodeURIComponent(order.number)}`
+		const issued = await this.data(path, { query: { token } }).then(
+			() => true,
+			() => false,
+		)
+		const invoiceLink = issued ? this.engineURL(path, { token, ...(this.store ? { store: this.store } : {}) }) : null
+		return { ...mapped, invoiceLink }
 	}
 
 	/** Everything the signed-in shopper has bought, once each, most recent first. */
@@ -137,7 +156,7 @@ export class OrderService extends BaseService {
 			{ method: 'POST', body: { contact: contact.trim() } },
 		)
 		rememberOrder({ number: res.order.number, token: res.access_token, cartId: '' })
-		return { data: [toOrder(res.order)] }
+		return { data: [await this.withInvoice(res.order, res.access_token)] }
 	}
 
 	/**
@@ -149,7 +168,7 @@ export class OrderService extends BaseService {
 		const number = orderNo.trim()
 		const order = await this.data<Order>(`/api/orders/${encodeURIComponent(number)}`, { query: { token: key.trim() } })
 		rememberOrder({ number: order.number, token: key.trim(), cartId: '' })
-		return { data: [toOrder(order)] }
+		return { data: [await this.withInvoice(order, key.trim())] }
 	}
 
 	/**
@@ -177,7 +196,7 @@ export class OrderService extends BaseService {
 			{ method: 'POST', body: { code: String(otp).trim() } },
 		)
 		rememberOrder({ number: res.order.number, token: res.access_token, cartId: '' })
-		return { data: [toOrder(res.order)] }
+		return { data: [await this.withInvoice(res.order, res.access_token)] }
 	}
 }
 
