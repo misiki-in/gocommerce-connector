@@ -1,4 +1,4 @@
-import type { AppliedDiscount, Cart, CartLine, CartOffer, FreeShipping, Product } from '../engine'
+import type { AppliedDiscount, Cart, GiftCardBalance, CartLine, CartOffer, FreeShipping, Product } from '../engine'
 import { GoCommerceError, NotSupportedError } from '../errors'
 import { emptyCart, toCart, toCartOffer, toFreeShipping, toProduct } from '../map'
 import { remember } from '../cache'
@@ -289,6 +289,36 @@ export class CartService extends BaseService {
 		if (!id) return emptyCart(await this.currency())
 		await this.engine(`/api/carts/${encodeURIComponent(id)}/discount`, { method: 'DELETE' })
 		saveCartExtras(id, { discount: null })
+		return this.getCartByCartId(id)
+	}
+
+	/**
+	 * A gift card (D250). The engine checks the code now and spends it at checkout,
+	 * after tax and any discount; a refusal is its own sentence, unchanged.
+	 */
+	async applyGiftCard({ cartId, code }: { cartId?: string; code: string }) {
+		const id = clean(cartId) ?? storedCartId()
+		if (!id) throw new GoCommerceError('Add something to your bag before adding a gift card.', 400)
+		const card = await this.data<GiftCardBalance>(`/api/carts/${encodeURIComponent(id)}/gift-card`, {
+			method: 'PUT',
+			body: { code: String(code ?? '').trim() },
+		})
+		saveCartExtras(id, {
+			giftCard: {
+				last4: card.last4,
+				balanceMinor: card.balance.amount_minor,
+				currency: card.balance.currency,
+				expiresAt: card.expires_at ?? null,
+			},
+		})
+		return this.getCartByCartId(id)
+	}
+
+	async removeGiftCard(cartId?: string) {
+		const id = clean(cartId) ?? storedCartId()
+		if (!id) return emptyCart(await this.currency())
+		await this.engine(`/api/carts/${encodeURIComponent(id)}/gift-card`, { method: 'DELETE' })
+		saveCartExtras(id, { giftCard: null })
 		return this.getCartByCartId(id)
 	}
 

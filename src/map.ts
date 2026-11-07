@@ -497,6 +497,14 @@ export function toCart(
 		savingAmount: money(discountMinor),
 		couponCode: extras.discount?.code ?? null,
 		discount: extras.discount ?? null,
+		/** The gift card on the bag (D250). Checkout's quote says what it pays; this is only what is on it. */
+		giftCard: extras.giftCard
+			? {
+					last4: extras.giftCard.last4,
+					balance: minorToMajor(extras.giftCard.balanceMinor, extras.giftCard.currency),
+					expiresAt: extras.giftCard.expiresAt,
+				}
+			: null,
 		shippingCharges: money(shippingMinor),
 		shippingRateId: extras.shippingRateId ?? null,
 		shippingMethod: extras.shippingRate?.name ?? null,
@@ -620,6 +628,16 @@ export function toOrder(o: Order) {
 		total: toMajor(o.total),
 		refunded: toMajor(o.refunded),
 		codCharges: toMajor(o.payment_fee),
+		/** What gift cards paid (D250); `total` is what the payment method took, so the order came to the two together. */
+		giftCardAmount: toMajor(o.gift_card),
+		/** Gift cards this order bought, with their codes for the buyer. */
+		giftCards: arr(o.gift_cards).map((g) => ({
+			code: g.code,
+			last4: g.last4,
+			initial: toMajor(g.initial),
+			balance: toMajor(g.balance),
+			active: g.active,
+		})),
 		coupon: code ? { code } : null,
 		userEmail: o.email,
 		email: o.email,
@@ -775,6 +793,7 @@ export function toCheckoutQuote(q: CheckoutQuote) {
 		tax: toMajor(q.tax),
 		taxIncluded: q.tax_inclusive,
 		codCharges: toMajor(q.payment_fee),
+		giftCard: q.gift_card ? { last4: q.gift_card.last4, amount: toMajor(q.gift_card.amount) } : null,
 		total: toMajor(q.total),
 	}
 }

@@ -3332,6 +3332,7 @@ test('a quote asks the engine with what checkout sends, and its figures arrive i
 			tax: 162.19,
 			taxIncluded: false,
 			codCharges: 40,
+			giftCard: null,
 			total: 1151.19,
 		})
 		assert.deepEqual(asked[0], { cart: 'cart_q', country: 'IN', state: 'Maharashtra', shipping_rate_id: '7', method: 'cod', email: 'asha@example.com' })
@@ -3590,7 +3591,7 @@ test('a total that moved since the quote is refused with the new figures, and co
 		const changes = []
 		svc.expectTotal({ cartId: 'cart_q', total: 1151, onChange: (...args) => changes.push(args) })
 		const refused = await svc.checkoutCOD({ cartId: 'cart_q' }).catch((e) => e)
-		const figures = { subtotal: 1000, shippingCharges: 150, shippingMethod: 'Express', discount: 0, coupon: null, tax: 51, taxIncluded: false, codCharges: 0, total: 1201 }
+		const figures = { subtotal: 1000, shippingCharges: 150, shippingMethod: 'Express', discount: 0, coupon: null, tax: 51, taxIncluded: false, codCharges: 0, giftCard: null, total: 1201 }
 		const sentence = 'Your total changed to ₹1,201. Check the new total and confirm again.'
 		assert.deepEqual([refused.status, refused.message, refused.details], [409, sentence, figures])
 		assert.deepEqual(changes, [[figures, sentence]])
@@ -3947,4 +3948,81 @@ test('the shop assistant hides without the module, and draws cards from the engi
 
 	const limited = new m.ShopAssistantService(answer(429, { error: { message: 'Wait a little.', code: 'rate_limited' } }))
 	await assert.rejects(limited.turn([{ role: 'user', text: 'x' }]), /Wait a little/)
+})
+
+// ---------------------------------------------------------------- gift cards (D250)
+
+test('a gift card goes on the cart, is shown by its last four, and comes off again', async () => {
+	const kept = {}
+	globalThis.window = {
+		location: { origin: 'http://storefront.test' },
+		localStorage: {
+			getItem: (k) => (k === 'cart_id' ? 'cart1' : (kept[k] ?? null)),
+			setItem: (k, v) => (kept[k] = v),
+			removeItem: (k) => delete kept[k],
+		},
+	}
+	globalThis.document = { cookie: '' }
+	try {
+		m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+		const calls = []
+		const svc = new m.CartService(async (url, init = {}) => {
+			const u = new URL(String(url))
+			calls.push([init.method ?? 'GET', u.pathname, init.body ? JSON.parse(init.body) : undefined])
+			if (u.pathname.endsWith('/gift-card') && init.method === 'PUT') {
+				return Response.json({ data: { last4: 'WXYZ', balance: money(50000, 'INR'), expires_at: null } })
+			}
+			if (u.pathname.endsWith('/gift-card')) return new Response(null, { status: 204 })
+			return Response.json({ data: { id: 'cart1', status: 'open', currency: 'INR', line_items: [cartLine()], item_count: 1, subtotal: money(4900, 'INR') } })
+		})
+		const cart = await svc.applyGiftCard({ code: ' abcd-efgh ' })
+		assert.deepEqual(calls[0], ['PUT', '/api/carts/cart1/gift-card', { code: 'abcd-efgh' }])
+		assert.deepEqual(cart.giftCard, { last4: 'WXYZ', balance: 500, expiresAt: null })
+		assert.ok(!JSON.stringify(kept).includes('abcd'), 'the code itself is not kept in the browser')
+
+		const after = await svc.removeGiftCard()
+		assert.ok(calls.some(([method, path]) => method === 'DELETE' && path === '/api/carts/cart1/gift-card'))
+		assert.equal(after.giftCard, null)
+	} finally {
+		delete globalThis.window
+		delete globalThis.document
+	}
+})
+
+test('the engine’s refusal of a gift card reaches the shopper word for word', async () => {
+	await withCart(async () => {
+		m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+		const svc = new m.CartService(async () =>
+			Response.json({ error: { code: 'bad_request', message: 'that gift card has expired' } }, { status: 400 }),
+		)
+		await assert.rejects(svc.applyGiftCard({ code: 'X' }), /that gift card has expired/)
+	})
+})
+
+test('a quote and an order carry what the gift card paid, and the cards the order bought', () => {
+	const q = m.toCheckoutQuote({
+		subtotal: money(150000, 'INR'),
+		shipping: money(0, 'INR'),
+		discount: null,
+		tax: money(0, 'INR'),
+		tax_inclusive: true,
+		payment_fee: money(0, 'INR'),
+		gift_card: { last4: 'WXYZ', amount: money(50000, 'INR') },
+		total: money(100000, 'INR'),
+	})
+	assert.deepEqual(q.giftCard, { last4: 'WXYZ', amount: 500 })
+	assert.equal(q.total, 1000)
+	assert.equal(m.toCheckoutQuote({ ...q, subtotal: money(1, 'INR'), shipping: money(0, 'INR'), tax: money(0, 'INR'), payment_fee: money(0, 'INR'), total: money(1, 'INR'), gift_card: null }).giftCard, null)
+
+	const o = m.toOrder({
+		id: 1, number: 'GC-1', status: 'confirmed', payment_status: 'paid', payment_provider: 'cod', currency: 'INR',
+		subtotal: money(150000, 'INR'), shipping: money(0, 'INR'), discount: money(0, 'INR'), tax: money(0, 'INR'),
+		tax_inclusive: true, total: money(100000, 'INR'), refunded: money(0, 'INR'), gift_card: money(50000, 'INR'),
+		gift_cards: [{ code: 'ABCDEFGHJKLMNPQR', last4: 'NPQR', initial: money(100000, 'INR'), balance: money(100000, 'INR'), active: true }],
+		email: 'a@example.com', address: { line1: '1 Way', city: 'Pune', postal_code: '411001', country: 'IN' },
+		line_items: null, fulfillments: null, created_at: '2026-11-07T00:00:00Z', updated_at: '2026-11-07T00:00:00Z',
+	})
+	assert.equal(o.giftCardAmount, 500)
+	assert.equal(o.total, 1000)
+	assert.deepEqual(o.giftCards, [{ code: 'ABCDEFGHJKLMNPQR', last4: 'NPQR', initial: 1000, balance: 1000, active: true }])
 })
