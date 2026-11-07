@@ -1,6 +1,7 @@
 import { keep, recall } from '../cache'
 import type { StorePassAnswer } from '../engine'
 import { GoCommerceError } from '../errors'
+import { toMinor } from '../money'
 import { readStaticStore } from '../static-store'
 import { BaseService, mediaUrl } from './base.service'
 import { StoreFacts } from './facts'
@@ -235,6 +236,9 @@ export class StoreService extends BaseService {
 					...flag(plugins.has('criteo')),
 					...(plugins.has('criteo') ? { accountId: String(plugins.get('criteo')?.settings?.account_id ?? '') } : {}),
 				},
+				// The line under a product's price about EMI. The engine alone decides, as for the
+				// ad tags: a static record could promise an offer this store never set up.
+				emiNote: emiNote(plugins, code),
 				isProductReviewsAndRatings: {
 					...basePlugins.isProductReviewsAndRatings,
 					...flag(plugins.has('product-reviews')),
@@ -306,6 +310,26 @@ function closedOf(plugins: Map<string, { settings?: Record<string, unknown> }> |
 	const plugin = plugins?.get('store-close')
 	if (!plugin) return undefined
 	return { message: String(plugin.settings?.message ?? ''), password: plugin.settings?.password === true }
+}
+
+type EmiNote = { active: boolean; noCostMonths?: number; minPrice?: number }
+
+/**
+ * The emi-note plugin's settings, each dropped unless it is a usable number: a monthly
+ * amount is only ever shown for a real no-cost offer, so a missing, zero or malformed
+ * month count must read as no offer at all. `minPrice` is in minor units.
+ */
+function emiNote(plugins: Map<string, { settings?: Record<string, unknown> }>, currency: string): EmiNote {
+	const plugin = plugins.get('emi-note')
+	if (!plugin) return { active: false }
+	const num = (v: unknown) => (typeof v === 'number' ? v : typeof v === 'string' && v.trim() ? Number(v) : NaN)
+	const months = num(plugin.settings?.no_cost_months)
+	const min = num(plugin.settings?.min_price)
+	return {
+		active: true,
+		noCostMonths: Number.isInteger(months) && months >= 2 ? months : undefined,
+		minPrice: Number.isFinite(min) && min > 0 ? toMinor(min, currency) : undefined,
+	}
 }
 
 /** Each tag's engine plugin, the setting that holds its ID, and its name on the store record. */
