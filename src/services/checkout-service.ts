@@ -428,7 +428,7 @@ export class CheckoutService extends BaseService {
 }
 
 /** The engine's gateways that take payment on their own hosted page. */
-export const REDIRECT_GATEWAYS = new Set(['paypal', 'adyen', 'paddle', 'lemonsqueezy', 'creem', 'hyperswitch', 'revenuecat'])
+export const REDIRECT_GATEWAYS = new Set(['paypal', 'adyen', 'paddle', 'lemonsqueezy', 'creem', 'hyperswitch', 'revenuecat', 'paystack', 'flutterwave'])
 
 /**
  * Whether the Cashfree session last opened here is a sandbox one. The storefront

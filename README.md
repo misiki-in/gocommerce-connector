@@ -231,7 +231,7 @@ Each of these is a real gap, listed so nobody has to find it in production.
   modal match engine gateways directly, and so does Cashfree's on a rupee store,
   under a neutral card icon. The storefront's redirect flow (which it
   reaches by the code `PAYPAL`) carries the store's first hosted-page gateway —
-  PayPal, Adyen, Paddle, Lemon Squeezy, Creem, Hyperswitch or RevenueCat — under that
+  PayPal, Adyen, Paddle, Lemon Squeezy, Creem, Hyperswitch, RevenueCat, Paystack or Flutterwave — under that
   gateway's own name and a neutral card icon. Any further one gets its own code and
   `redirects: true`, which needs `@misiki/kitcommerce-core` 0.1.60 or later to reach
   its page. GoCommerce's Stripe is a Payment Element (a
