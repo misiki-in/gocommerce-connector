@@ -785,7 +785,7 @@ test('a hosted-page gateway rides the storefront’s redirect flow under its own
 	assert.equal(data[2].redirects, true)
 })
 
-test('reading a Paystack or Flutterwave order asks the gateway while it is unpaid, and only then', async () => {
+test('reading an order on a gateway with a check asks it while the order is unpaid, and only then', async () => {
 	const kept = { gocommerce_orders: JSON.stringify([{ number: 'GC-1', token: 't', cartId: 'c', reference: 'ref/1' }]) }
 	globalThis.window = {
 		location: { origin: 'http://storefront.test', hostname: 'storefront.test' },
@@ -817,6 +817,10 @@ test('reading a Paystack or Flutterwave order asks the gateway while it is unpai
 		assert.equal(r.read.paymentStatus, (await run('cod', 'paid')).read.paymentStatus, 'the paid order is what comes back')
 		r = await run('flutterwave', 'pending', 'pending')
 		assert.deepEqual(r.seen, [GET, 'POST /x/payments-flutterwave/transactions/ref%2F1/verify'])
+		r = await run('cashfree', 'pending', 'pending')
+		assert.deepEqual(r.seen, [GET, 'POST /x/payments-cashfree/orders/ref%2F1/verify'])
+		r = await run('paypal', 'pending', 'pending')
+		assert.deepEqual(r.seen, [GET, 'POST /x/payments-paypal/orders/ref%2F1/capture'])
 		r = await run('paystack', 'pending', 500)
 		assert.equal(r.seen.length, 2, 'a failed check still answers with the order')
 		assert.deepEqual((await run('paystack', 'paid')).seen, [GET])
