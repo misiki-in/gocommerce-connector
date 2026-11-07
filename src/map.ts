@@ -167,6 +167,12 @@ export function toProduct(p: Product, extra: { categoryHierarchy?: { name: strin
 		slug: p.slug,
 		title: p.title,
 		name: p.title,
+		// The words the store wrote for each picture, by the picture's address.
+		imageAlts: Object.fromEntries(
+			arr(p.media)
+				.filter((m) => m.kind === 'image' && m.alt)
+				.map((m) => [mediaUrl(m.url), m.alt]),
+		),
 		subtitle: null,
 		description: p.description ?? '',
 		status: p.status === 'active' ? 'published' : p.status,

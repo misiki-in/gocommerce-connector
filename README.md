@@ -145,6 +145,8 @@ down stays best-effort: the storefront renders from its static record.
 | PIN code autofill | `/api/postcodes/IN/{pin}` — `addressService.lookupPostcode({ country, postcode })`: city and state, or null when the engine has no directory or the PIN is unknown (D134) |
 | wishlist | `/x/wishlist` |
 | reviews | `/x/reviews` |
+| home page pictures | `/x/banners?page=home`, on `pageService.getOne('home')` as `desktopBanners`, `mobileBanners` and `sections` |
+| invoices | `/x/invoices/{number}`: `invoiceLink` on an order once one is issued |
 | video showcases | `/x/showcases` — `showcaseService.list()` for a product, a collection or the home page, and `recordView()` |
 | Google reviews | `/x/google-reviews/place` — `googleReviewService.place()`: the store's Google rating, rating count and up to five Google reviews with their authors' names, photos and profile links, read live on every call because Google's terms forbid keeping them (call it when the section is in view; each call is billed to the store's Google key). Null while ext/google-reviews or its `show_place` switch is off, when the place has no ratings, when the day's lookups are spent (429) or Google refuses (502). `/x/google-reviews/survey/{number}` — `googleReviewService.survey(number)`: Google Customer Reviews' opt-in fields, built by the engine from an order placed in this browser, read with its access token; null for any other order or while `customer_reviews` is off |
 | content pages (`/p/…`, legal pages) | `/x/cms/pages` |
