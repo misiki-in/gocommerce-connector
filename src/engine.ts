@@ -217,6 +217,22 @@ export type AppliedDiscount = {
 	free_shipping?: boolean
 }
 
+/** What `PUT /api/carts/{token}/gift-card` answers (D250): enough to show what is left, nothing about whose it is. */
+export type GiftCardBalance = {
+	last4: string
+	balance: Money
+	expires_at: string | null
+}
+
+/** A gift card an order bought, shown to its buyer on that order (D250). */
+export type IssuedGiftCard = {
+	code: string
+	last4: string
+	initial: Money
+	balance: Money
+	active: boolean
+}
+
 export type Address = {
 	name?: string
 	phone?: string
@@ -278,6 +294,10 @@ export type Order = {
 	name?: string
 	address: Address
 	discounts?: AppliedDiscount[] | null
+	/** What gift cards paid (D250); the order's full value is `total` plus this. Absent on an engine before it. */
+	gift_card?: Money
+	/** Gift cards this order bought. */
+	gift_cards?: IssuedGiftCard[] | null
 	line_items: OrderLine[] | null
 	fulfillments: Fulfillment[] | null
 	access_token?: string
@@ -311,6 +331,8 @@ export type CheckoutQuote = {
 	tax: Money
 	tax_inclusive: boolean
 	payment_fee: Money
+	/** What a gift card on the cart pays (D250); `total` is what is left for the payment method. */
+	gift_card?: { last4: string; amount: Money } | null
 	total: Money
 }
 
