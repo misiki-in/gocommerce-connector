@@ -2124,6 +2124,47 @@ test('the newsletter sign-up is on exactly when the newsletter module is', async
 	}
 })
 
+test('the EMI note comes from the engine alone, and only usable numbers come with it', async () => {
+	const read = async (list) => {
+		m.clearStoreCache()
+		m.BaseService.setCredentials({ apiUrl: 'http://emi.test' })
+		// A static record that would switch it on with an offer must not count.
+		m.setStaticStore(() => ({ id: 'from_config', name: 'Shop', plugins: { emiNote: { active: true, noCostMonths: 6 } } }))
+		const svc = new m.StoreService(async (url) => {
+			const path = new URL(String(url)).pathname
+			if (path === '/api/checkout') return Response.json({ data: { currency: 'INR', methods: [] } })
+			if (path === '/api/plugins') return Response.json({ data: list })
+			return Response.json({ data: [] })
+		})
+		return (await svc.getStoreByIdOrDomain()).plugins.emiNote
+	}
+	assert.deepEqual(await read([]), { active: false })
+	assert.deepEqual(await read([{ key: 'emi-note', settings: { no_cost_months: 3, min_price: 2999.5 } }]), {
+		active: true,
+		noCostMonths: 3,
+		minPrice: 299950,
+	})
+	assert.deepEqual(await read([{ key: 'emi-note', settings: { no_cost_months: '6', min_price: '3000' } }]), {
+		active: true,
+		noCostMonths: 6,
+		minPrice: 300000,
+	})
+	for (const settings of [
+		{},
+		{ no_cost_months: null, min_price: null },
+		{ no_cost_months: '', min_price: '' },
+		{ no_cost_months: 0, min_price: 0 },
+		{ no_cost_months: 1, min_price: -5 },
+		{ no_cost_months: 2.5, min_price: 'lots' },
+		{ no_cost_months: true, min_price: [] },
+	]) {
+		const note = await read([{ key: 'emi-note', settings }])
+		assert.equal(note.active, true)
+		assert.equal(note.noCostMonths, undefined, JSON.stringify(settings))
+		assert.equal(note.minPrice, undefined, JSON.stringify(settings))
+	}
+})
+
 // ---------------------------------------------------------------- 0.12.0: add-ons, suggestions, offers (D133)
 
 const withCart = async (fn) => {
