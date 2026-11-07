@@ -3852,3 +3852,58 @@ test('closing Cashfree’s window and paying again sends the first request under
 		leaveBrowser()
 	}
 })
+
+test('the shop assistant hides without the module, and draws cards from the engine in major units', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: undefined, baseDomain: undefined })
+	const seen = []
+	const answer = (status, body) => async (url, init) => {
+		seen.push({ url: String(url), init })
+		return new Response(JSON.stringify(body), { status })
+	}
+	assert.equal(await new m.ShopAssistantService(answer(404, { error: { message: 'no' } })).enabled(), false)
+	assert.equal(await new m.ShopAssistantService(answer(200, { data: { enabled: false } })).enabled(), false)
+	assert.equal(await new m.ShopAssistantService(answer(200, { data: { enabled: true } })).enabled(), true)
+
+	const svc = new m.ShopAssistantService(
+		answer(200, {
+			data: {
+				reply: 'Let me look.',
+				closest: true,
+				handover: false,
+				faqs: [{ id: 3, question: 'Q', answer: 'A' }],
+				products: [
+					{
+						product_id: 7,
+						slug: 'hoops',
+						title: 'Hoops',
+						image_url: 'https://cdn.example/h.jpg',
+						price: money(150000, 'INR'),
+						compare_at_price: money(200000, 'INR'),
+						variant_id: 11,
+					},
+					{ product_id: 8, slug: 'studs', title: 'Studs', price: money(1000, 'JPY'), variant_id: null },
+				],
+			},
+		}),
+	)
+	const out = await svc.turn([{ role: 'user', text: 'earrings' }])
+	const last = seen.at(-1)
+	assert.match(last.url, /\/x\/shop-assistant\/turn$/)
+	assert.deepEqual(JSON.parse(last.init.body), { messages: [{ role: 'user', text: 'earrings' }] })
+	assert.equal(out.closest, true)
+	assert.deepEqual(out.products[0], {
+		productId: 7,
+		slug: 'hoops',
+		title: 'Hoops',
+		image: 'https://cdn.example/h.jpg',
+		price: 1500,
+		compareAtPrice: 2000,
+		currency: 'INR',
+		variantId: 11,
+	})
+	assert.equal(out.products[1].price, 1000, 'yen has no decimals')
+	assert.equal(out.products[1].variantId, null)
+
+	const limited = new m.ShopAssistantService(answer(429, { error: { message: 'Wait a little.', code: 'rate_limited' } }))
+	await assert.rejects(limited.turn([{ role: 'user', text: 'x' }]), /Wait a little/)
+})
