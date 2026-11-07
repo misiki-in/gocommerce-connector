@@ -775,10 +775,14 @@ test('a hosted-page gateway rides the storefront’s redirect flow under its own
 		[
 			['COD', 'cod', 'Cash on delivery'],
 			['PAYPAL', 'paddle', 'Paddle'],
+			['ADYEN', 'adyen', 'Adyen'],
 		],
-		'Stripe has no flow here; only the first hosted-page gateway can be told apart',
+		'Stripe has no flow here; every hosted-page gateway does',
 	)
 	assert.equal(data[1].img, '/payment/card.svg')
+	assert.equal(data[2].img, '/payment/card.svg')
+	assert.equal(data[1].redirects, undefined, 'the first keeps the storefront’s own PAYPAL flow')
+	assert.equal(data[2].redirects, true)
 })
 
 test('the engine’s PayPal rides the storefront’s redirect flow', async () => {
