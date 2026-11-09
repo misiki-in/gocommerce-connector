@@ -143,6 +143,21 @@ export type CartLine = {
 	design_id?: string
 	design_preview_url?: string
 	compare_at_price?: Money
+	/** Whether the line is sent at all; absent from an engine before D254, which asked every basket for an address. */
+	requires_shipping?: boolean
+}
+
+/** One file of one paid order line, as its buyer sees it (ext/digital, D254). */
+export type DigitalDownload = {
+	id: number
+	order_line_id: number
+	title: string
+	filename: string
+	size_bytes: number
+	downloads: number
+	download_limit: number | null
+	expires_at: string | null
+	status: 'ready' | 'expired' | 'used_up' | 'revoked'
 }
 
 /** A variant offered with a product, optionally at an offer price (D133). */
