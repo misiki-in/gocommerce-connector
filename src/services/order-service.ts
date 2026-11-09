@@ -1,4 +1,4 @@
-import type { Order, Product } from '../engine'
+import type { DigitalDownload, Order, Product } from '../engine'
 import { GoCommerceError, NotSupportedError } from '../errors'
 import { toOrder } from '../map'
 import { toMajor } from '../money'
@@ -88,14 +88,60 @@ export class OrderService extends BaseService {
 	 */
 	private async withInvoice(order: Order, token?: string) {
 		const mapped = toOrder(order)
-		if (!token || ['pending', 'failed'].includes(order.payment_status)) return mapped
+		if (!token || ['pending', 'failed'].includes(order.payment_status)) return { ...mapped, downloads: null }
 		const path = `/x/invoices/${encodeURIComponent(order.number)}`
-		const issued = await this.data(path, { query: { token } }).then(
-			() => true,
-			() => false,
-		)
+		const [issued, downloads] = await Promise.all([
+			this.data(path, { query: { token } }).then(
+				() => true,
+				() => false,
+			),
+			this.downloads(order.number, token),
+		])
 		const invoiceLink = issued ? this.engineURL(path, { token, ...(this.store ? { store: this.store } : {}) }) : null
-		return { ...mapped, invoiceLink }
+		return { ...mapped, invoiceLink, downloads }
+	}
+
+	/**
+	 * The order's files to download once it is paid (ext/digital, D254), or null from a store
+	 * without the module. Each says whether it can still be had; the link itself is made on click
+	 * by `downloadLink`, because a link lasts minutes.
+	 */
+	private async downloads(number: string, token: string) {
+		const res = await this.data<{ downloads: DigitalDownload[] | null }>(
+			`/x/digital/orders/${encodeURIComponent(number)}`,
+			{ query: { token } },
+		).catch(() => null)
+		if (!res) return null
+		return (res.downloads ?? []).map((d) => ({
+			id: String(d.id),
+			title: d.title,
+			filename: d.filename,
+			size: d.size_bytes,
+			downloads: d.downloads,
+			limit: d.download_limit,
+			expiresAt: d.expires_at,
+			status: d.status,
+		}))
+	}
+
+	/**
+	 * A fresh link to one download of an order, valid for minutes: the URL to send the browser to.
+	 * The order's key is the one this browser holds (placed here, or opened from its email) or the
+	 * signed-in account's. A refusal is a GoCommerceError carrying the engine's sentence — the limit
+	 * reached, the days run out, the order refunded — which is worth showing as it is.
+	 */
+	async downloadLink({ orderNo, id }: { orderNo: string; id: string }) {
+		const number = orderNo.trim()
+		let token = placedOrder(number)?.token
+		if (!token && sessionToken()) {
+			token = (await this.data<Order>(`/x/identity/me/orders/${encodeURIComponent(number)}`, { auth: true })).access_token
+		}
+		if (!token) throw new GoCommerceError('Open this order again to download its files.', 404, 'not_found')
+		const res = await this.data<{ url: string; expires_at: string }>(
+			`/x/digital/orders/${encodeURIComponent(number)}/downloads/${encodeURIComponent(id)}`,
+			{ method: 'POST', query: { token } },
+		)
+		return { url: this.engineURL(res.url, this.store ? { store: this.store } : undefined), expiresAt: res.expires_at }
 	}
 
 	/** Everything the signed-in shopper has bought, once each, most recent first. */

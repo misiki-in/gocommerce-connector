@@ -187,6 +187,19 @@ test('a cart carries its lines with string ids, selected for checkout', () => {
 	assert.equal('message' in c, false, 'the storefront discards a cart that has a message key')
 })
 
+test('a basket of downloads needs no delivery address; one parcel in it does (D254)', () => {
+	const line = cart().line_items[0]
+	const ebook = { ...line, id: 6, sku: 'GUIDE-PDF', requires_shipping: false }
+	const digital = m.toCart(cart({ line_items: [ebook] }))
+	assert.equal(digital.needAddress, false)
+	assert.equal(digital.lineItems[0].requiresShipping, false)
+	const mixed = m.toCart(cart({ line_items: [ebook, { ...line, requires_shipping: true }] }))
+	assert.equal(mixed.needAddress, true)
+	// An engine from before the field asked every basket for an address, and still does.
+	assert.equal(m.toCart(cart()).needAddress, true)
+	assert.equal(m.toCart(cart()).lineItems[0].requiresShipping, true)
+})
+
 test('a cart’s totals take the kept coupon and delivery choice', () => {
 	const c = m.toCart(cart(), {
 		discount: { discount_id: 1, code: 'TENOFF', title: '10 off', kind: 'fixed', amount_minor: 1000 },
@@ -814,7 +827,7 @@ test('reading an order on a gateway with a check asks it while the order is unpa
 	const GET = 'GET /api/orders/GC-1'
 	try {
 		let r = await run('paystack', 'pending', 'paid')
-		assert.deepEqual(r.seen, [GET, 'POST /x/payments-paystack/transactions/ref%2F1/verify', GET, 'GET /x/invoices/GC-1'])
+		assert.deepEqual(r.seen, [GET, 'POST /x/payments-paystack/transactions/ref%2F1/verify', GET, 'GET /x/invoices/GC-1', 'GET /x/digital/orders/GC-1'])
 		assert.equal(r.read.paymentStatus, (await run('cod', 'paid')).read.paymentStatus, 'the paid order is what comes back')
 		r = await run('flutterwave', 'pending', 'pending')
 		assert.deepEqual(r.seen, [GET, 'POST /x/payments-flutterwave/transactions/ref%2F1/verify'])
@@ -824,7 +837,7 @@ test('reading an order on a gateway with a check asks it while the order is unpa
 		assert.deepEqual(r.seen, [GET, 'POST /x/payments-paypal/orders/ref%2F1/capture'])
 		r = await run('paystack', 'pending', 500)
 		assert.equal(r.seen.length, 2, 'a failed check still answers with the order')
-		assert.deepEqual((await run('paystack', 'paid')).seen, [GET, 'GET /x/invoices/GC-1'])
+		assert.deepEqual((await run('paystack', 'paid')).seen, [GET, 'GET /x/invoices/GC-1', 'GET /x/digital/orders/GC-1'])
 		assert.deepEqual((await run('adyen', 'pending')).seen, [GET])
 	} finally {
 		delete globalThis.window
@@ -4025,4 +4038,44 @@ test('a quote and an order carry what the gift card paid, and the cards the orde
 	assert.equal(o.giftCardAmount, 500)
 	assert.equal(o.total, 1000)
 	assert.deepEqual(o.giftCards, [{ code: 'ABCDEFGHJKLMNPQR', last4: 'NPQR', initial: 1000, balance: 1000, active: true }])
+})
+
+test('a paid order lists its downloads, and a link is minted with the key this browser holds (D254)', async () => {
+	const kept = { gocommerce_orders: JSON.stringify([{ number: 'GC-2', token: 'key-2', cartId: 'c' }]) }
+	globalThis.window = {
+		location: { origin: 'http://storefront.test', hostname: 'storefront.test' },
+		localStorage: { getItem: (k) => kept[k] ?? null, setItem() {}, removeItem() {} },
+	}
+	globalThis.document = { cookie: '' }
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const order = {
+		id: 2, number: 'GC-2', status: 'delivered', payment_status: 'paid', payment_provider: 'razorpay', currency: 'INR',
+		subtotal: { amount_minor: 49900, currency: 'INR' }, total: { amount_minor: 49900, currency: 'INR' },
+		email: 'a@example.com', lines: [], fulfillments: [], address: {}, created_at: '', updated_at: '',
+	}
+	const asked = []
+	try {
+		const svc = new m.OrderService(async (url, init) => {
+			const u = new URL(url)
+			asked.push(`${init.method ?? 'GET'} ${u.pathname} token=${u.searchParams.get('token')}`)
+			if (u.pathname === '/x/digital/orders/GC-2') {
+				return Response.json({ data: { downloads: [{ id: 9, order_line_id: 1, title: 'Guide', filename: 'guide.pdf',
+					size_bytes: 300000, downloads: 0, download_limit: 3, expires_at: null, status: 'ready' }] } })
+			}
+			if (u.pathname === '/x/digital/orders/GC-2/downloads/9') {
+				return Response.json({ data: { url: '/x/digital/download/abc', expires_at: '2026-11-09T10:00:00Z' } }, { status: 201 })
+			}
+			if (u.pathname.startsWith('/x/invoices/')) return Response.json({ error: { code: 'not_found', message: 'no' } }, { status: 404 })
+			return Response.json({ data: order })
+		})
+		const read = await svc.getOrder('GC-2')
+		assert.deepEqual(read.downloads, [{ id: '9', title: 'Guide', filename: 'guide.pdf', size: 300000, downloads: 0, limit: 3, expiresAt: null, status: 'ready' }])
+		const link = await svc.downloadLink({ orderNo: 'GC-2', id: '9' })
+		assert.equal(new URL(link.url).origin + new URL(link.url).pathname, 'http://engine.test/x/digital/download/abc')
+		assert.ok(asked.includes('POST /x/digital/orders/GC-2/downloads/9 token=key-2'), asked.join('\n'))
+		await assert.rejects(svc.downloadLink({ orderNo: 'GC-9', id: '9' }), /Open this order again/)
+	} finally {
+		delete globalThis.window
+		delete globalThis.document
+	}
 })
