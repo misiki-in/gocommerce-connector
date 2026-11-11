@@ -274,7 +274,9 @@ function withMedia(value: unknown, key: string | null): unknown {
 function toSection(s: EngineLayoutSection): HomeLayoutSection {
 	const settings = withMedia(s.settings ?? {}, null) as Record<string, unknown>
 	const out: HomeLayoutSection = { id: s.id, type: s.type, settings }
-	if (s.type === 'product-grid') out.products = (s.products ?? []).map((p) => toProduct(p))
+	// A grid always has products; any other section the engine sends products on (a line-up, a
+	// fitting room) has them all at once, and its settings keep the ids.
+	if (s.type === 'product-grid' || s.products) out.products = (s.products ?? []).map((p) => toProduct(p))
 	if (s.type === 'collection-list') {
 		out.collections = (s.collections ?? []).map((c) => ({
 			id: String(c.id),
