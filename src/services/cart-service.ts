@@ -192,7 +192,7 @@ export class CartService extends BaseService {
 		const first = cart.line_items?.[0]
 		if (!first) return []
 		const related = await new ProductService(this._fetch).listRelatedProducts({
-			product: String(first.product_id),
+			productId: String(first.product_id),
 			limit: limit + held.size,
 		})
 		return (related.data as { id: string }[]).filter((p) => !held.has(String(p.id))).slice(0, limit)

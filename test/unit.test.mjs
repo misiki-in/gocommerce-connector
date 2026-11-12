@@ -1503,7 +1503,7 @@ test('a published home layout keeps its order and settings, and its grids carry 
 	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: '' })
 	const seen = []
 	const svc = new m.LayoutService(async (url) => {
-		seen.push(url)
+		if (!url.includes('/x/layouts/theme')) seen.push(url) // the theme read only lists the published pages
 		return Response.json({
 			data: {
 				page: 'home',
@@ -1985,7 +1985,7 @@ test('the header comes with its settings and its menu, read live by handle', asy
 	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: '' })
 	const seen = []
 	const svc = new m.LayoutService(async (url) => {
-		seen.push(url)
+		if (!url.includes('/x/layouts/theme')) seen.push(url) // the theme read only lists the published pages
 		if (String(url).includes('/x/navigation/menus/main')) {
 			return Response.json({ data: engineMenu('main', [menuItem(1, 'Rings', 'collection', 'rings'), menuItem(2, 'About', 'page', 'about-us')]) })
 		}
@@ -4078,4 +4078,42 @@ test('a paid order lists its downloads, and a link is minted with the key this b
 		delete globalThis.window
 		delete globalThis.document
 	}
+})
+
+// ---------------------------------------------------------------- only the published layouts are asked for (GoCommerce #367)
+
+test('a layout the theme does not list is not asked for, and a preview still is', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://pages.test' })
+	const seen = []
+	const svc = new m.LayoutService(async (url) => {
+		seen.push(url)
+		if (url.includes('/x/layouts/theme')) return Response.json({ data: { settings: {}, pages: ['home', 'footer'] } })
+		return Response.json({ data: { page: 'footer', theme: 'default', sections: [] } })
+	})
+	assert.equal(await svc.getProductLayout(), null, 'no product template published: none asked for')
+	assert.equal(await svc.getHeader(), null)
+	assert.ok(await svc.getPageLayout('footer'), 'a published page is still read')
+	await svc.getProductLayout({ preview: 'k3y' })
+	assert.deepEqual(
+		seen.map((u) => u.replace('http://pages.test', '')),
+		['/x/layouts/theme', '/x/layouts/footer', '/x/layouts/product?preview=k3y'],
+		'one theme read for all of them, and only the published page and the preview asked for',
+	)
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+})
+
+test("a cart's cross-sells ask for their product by id", async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://xsell.test' })
+	const seen = []
+	const svc = new m.CartService(async (url) => {
+		seen.push(url.replace('http://xsell.test', ''))
+		if (url.includes('/cross-sells')) return Response.json({ data: [] })
+		if (/\/api\/carts\/[^/?]+$/.test(url)) return Response.json({ data: { id: 'c1', line_items: [{ id: 1, product_id: 257 }] } })
+		if (url.endsWith('/api/products/257')) return Response.json({ data: { id: 257, slug: 'satin-saree', title: 'Saree', variants: [] } })
+		return Response.json({ data: [], meta: { total: 0 } })
+	})
+	await svc.listCrossSells({ cartId: 'c1' }).catch(() => [])
+	assert.ok(seen.includes('/api/products/257'), 'asked by id')
+	assert.ok(!seen.some((u) => u.startsWith('/api/products/slug/257')), 'never through the slug route first')
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
 })
