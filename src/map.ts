@@ -120,6 +120,8 @@ export function toVariant(v: Variant, p: Product, optionless: boolean) {
 		allowBackorder: v.active && v.continue_selling,
 		active: v.active,
 		weight: v.weight_grams ?? null,
+		// The engine keeps every weight in grams.
+		weightUnit: v.weight_grams == null ? null : 'g',
 		length: v.dimensions?.length_mm ?? null,
 		width: v.dimensions?.width_mm ?? null,
 		height: v.dimensions?.height_mm ?? null,
@@ -187,6 +189,7 @@ export function toProduct(p: Product, extra: { categoryHierarchy?: { name: strin
 		sku: lead?.sku ?? null,
 		barcode: lead?.barcode ?? null,
 		weight: lead?.weight_grams ?? null,
+		weightUnit: lead?.weight_grams == null ? null : 'g',
 		originCountry: lead?.origin_country ?? null,
 		thumbnail: images[0] ?? null,
 		image_url: images[0] ?? null,

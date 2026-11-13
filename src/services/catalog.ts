@@ -23,6 +23,8 @@ export type CatalogQuery = {
 	 * are not applied.
 	 */
 	attributes?: Record<string, string[]>
+	/** Ticked option values by option name, `{ Size: ['M'] }`: the engine's `option=Size:M` (D264). */
+	options?: Record<string, string[]>
 	tags?: string[]
 	vendors?: string[]
 	productTypes?: string[]
@@ -142,10 +144,14 @@ export class CatalogService extends BaseService {
 			values.filter(Boolean).map((v) => `${handle}:${v}`),
 		)
 
+		const option = Object.entries(q.options ?? {}).flatMap(([name, values]) =>
+			values.filter(Boolean).map((v) => `${name}:${v}`),
+		)
+
 		// A shopper's words go to the index first: it forgives typos and ranks
-		// by relevance. Not once they have ticked a tag, vendor, type or
-		// attribute, which only the database filters and counts.
-		const refined = attr.length > 0 || !!(q.tags?.length || q.vendors?.length || q.productTypes?.length)
+		// by relevance. Not once they have ticked a tag, vendor, type, attribute
+		// or option, which only the database filters and counts.
+		const refined = attr.length > 0 || option.length > 0 || !!(q.tags?.length || q.vendors?.length || q.productTypes?.length)
 		const triedIndex = !!search && !refined
 		const counted = q.facets && !legacyListing.has(this.engineBase())
 		const facetListing = async (page: number, limit: number) => {
@@ -162,6 +168,7 @@ export class CatalogService extends BaseService {
 					vendor: q.vendors,
 					product_type: q.productTypes,
 					attr,
+					option,
 					price_min: minor(q.priceFrom),
 					price_max: minor(q.priceTo),
 					...engineSort(q.sort),
