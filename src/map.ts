@@ -482,7 +482,7 @@ export function toCart(
 	const currency = c.currency
 	const subtotalMinor = lines.reduce((n, l) => n + l.total.amount_minor, 0)
 	const discountMinor = extras.discount && !extras.discount.free_shipping ? extras.discount.amount_minor : 0
-	const shippingMinor = extras.discount?.free_shipping ? 0 : (extras.shippingRate?.minor ?? 0)
+	const shippingMinor = extras.discount?.free_shipping || extras.pickup ? 0 : (extras.shippingRate?.minor ?? 0)
 	const totalMinor = Math.max(0, subtotalMinor - discountMinor) + shippingMinor
 	const money = (minor: number) => minorToMajor(minor, currency)
 	const ship = extras.shippingAddress ?? null
@@ -512,7 +512,10 @@ export function toCart(
 			: null,
 		shippingCharges: money(shippingMinor),
 		shippingRateId: extras.shippingRateId ?? null,
-		shippingMethod: extras.shippingRate?.name ?? null,
+		shippingMethod: extras.pickup ? 'Pickup from the shop' : (extras.shippingRate?.name ?? null),
+		/** Collect from the shop (D271), and the answers to the store's checkout questions. */
+		pickup: extras.pickup === true,
+		answers: extras.answers ?? null,
 		tax: 0,
 		taxIncluded: false,
 		codCharges: 0,
