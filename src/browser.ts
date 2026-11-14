@@ -265,6 +265,10 @@ export type CartExtras = {
 	billingAddress?: StorefrontAddress | null
 	shippingRateId?: string | null
 	shippingRate?: { id: string; name: string; minor: number; currency: string } | null
+	/** Collect from the shop (D271): no street, no delivery charge. */
+	pickup?: boolean
+	/** The store's checkout questions, answered: question words to answer (D271). */
+	answers?: Record<string, string> | null
 	discount?: AppliedDiscount | null
 	/** The gift card on the cart, as the engine answered when it was applied. The cart does not carry it, and the code is not kept. */
 	giftCard?: { last4: string; balanceMinor: number; currency: string; expiresAt: string | null } | null

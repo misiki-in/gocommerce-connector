@@ -239,6 +239,9 @@ export class StoreService extends BaseService {
 				// The line under a product's price about EMI. The engine alone decides, as for the
 				// ad tags: a static record could promise an offer this store never set up.
 				emiNote: emiNote(plugins, code),
+				// Order on WhatsApp, part 2 (D271): what checkout itself enforces, so the
+				// bag and the address step can say it before the engine refuses.
+				...orderRules(plugins),
 				isProductReviewsAndRatings: {
 					...basePlugins.isProductReviewsAndRatings,
 					...flag(plugins.has('product-reviews')),
@@ -329,6 +332,38 @@ function emiNote(plugins: Map<string, { settings?: Record<string, unknown> }>, c
 		active: true,
 		noCostMonths: Number.isInteger(months) && months >= 2 ? months : undefined,
 		minPrice: Number.isFinite(min) && min > 0 ? toMinor(min, currency) : undefined,
+	}
+}
+
+/**
+ * Pickup from the shop, a minimum order (in major units, as the storefront shows money),
+ * a pause on orders, and the questions checkout asks (D271). Each is `{ active: false }`
+ * while its plugin is off, so a storefront that never heard of it changes nothing.
+ * A question ending in `*` must be answered; the engine knows it by its words without the star.
+ */
+function orderRules(plugins: Map<string, { settings?: Record<string, unknown> }>) {
+	const on = (key: string) => plugins.get(key)
+	const pickup = on('store-pickup')
+	const minimum = on('minimum-order')
+	const paused = on('pause-orders')
+	const asks = on('checkout-questions')
+	const amount = Number(minimum?.settings?.amount)
+	const questions = String(asks?.settings?.questions ?? '')
+		.split(/\r?\n/)
+		.map((line) => line.trim())
+		.filter(Boolean)
+		.map((line) => (line.endsWith('*') ? { text: line.slice(0, -1).trim(), required: true } : { text: line, required: false }))
+		.filter((q) => q.text)
+	return {
+		pickup: pickup ? { active: true, address: String(pickup.settings?.address ?? '') } : { active: false },
+		minimumOrder: minimum && amount > 0 ? { active: true, amount } : { active: false },
+		ordersPaused: paused
+			? {
+					active: true,
+					message: String(paused.settings?.message || 'We are not taking orders right now. Please check back soon.'),
+				}
+			: { active: false },
+		checkoutQuestions: asks && questions.length ? { active: true, questions } : { active: false },
 	}
 }
 
