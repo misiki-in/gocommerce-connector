@@ -4132,3 +4132,49 @@ test("a cart's cross-sells ask for their product by id", async () => {
 	assert.ok(!seen.some((u) => u.startsWith('/api/products/slug/257')), 'never through the slug route first')
 	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
 })
+
+test('a kept delivery choice is priced again from the engine each time the bag is read', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: undefined, baseDomain: undefined })
+	const store = {
+		gocommerce_cart_tok: JSON.stringify({
+			shippingAddress: { country: 'IN', state: 'Odisha' },
+			shippingRateId: '266',
+			// Kept when the bag was small, or the store priced in dollars: 700 minor read as ₹7.
+			shippingRate: { id: '266', name: 'Standard', minor: 700, currency: 'USD' },
+		}),
+	}
+	globalThis.window = {
+		location: { origin: 'http://storefront.test', hostname: 'storefront.test' },
+		localStorage: { getItem: (k) => store[k] ?? null, setItem: (k, v) => (store[k] = v), removeItem: (k) => delete store[k] },
+	}
+	globalThis.document = { cookie: '' }
+	let offered = [{ rate_id: 266, name: 'Standard', price: money(0, 'INR'), zone_id: 1 }]
+	const svc = new m.CartService(async (url) => {
+		const u = new URL(String(url))
+		if (u.pathname === '/api/checkout/rates') return Response.json({ data: { currency: 'INR', rates: offered } })
+		if (u.pathname === '/api/carts/tok') {
+			return Response.json({
+				data: {
+					id: 'tok', status: 'open', currency: 'INR', item_count: 1, subtotal: money(229900, 'INR'),
+					line_items: [{ id: 1, product_id: 7, variant_id: 11, title: 'Kurta', quantity: 1, unit_price: money(229900, 'INR'), total: money(229900, 'INR') }],
+				},
+			})
+		}
+		return Response.json({ error: { code: 'not_found', message: 'not found' } }, { status: 404 })
+	})
+	try {
+		const cart = await svc.getCartByCartId('tok')
+		assert.equal(cart.shippingCharges, 0)
+		assert.equal(cart.total, 2299)
+		assert.equal(JSON.parse(store.gocommerce_cart_tok).shippingRate.currency, 'INR')
+
+		// A rate the address is no longer offered is dropped, so the shopper chooses again.
+		offered = []
+		const again = await svc.getCartByCartId('tok')
+		assert.equal(again.shippingRateId, null)
+		assert.equal(again.shippingCharges, 0)
+	} finally {
+		delete globalThis.window
+		delete globalThis.document
+	}
+})
