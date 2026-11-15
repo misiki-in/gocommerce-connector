@@ -144,6 +144,26 @@ export class OrderService extends BaseService {
 		return { url: this.engineURL(res.url, this.store ? { store: this.store } : undefined), expiresAt: res.expires_at }
 	}
 
+	/**
+	 * Records the 12-digit UPI reference (UTR) a shopper paid a Pay by UPI order with (D277), so the
+	 * store can find the payment in its bank app and mark the order paid. It can be sent again to
+	 * correct it until then. Answers the order as `getOrder` does; a refusal is a GoCommerceError with
+	 * the engine's sentence (not 12 digits, already paid), which is worth showing as it is.
+	 */
+	async submitUpiReference({ orderNo, reference }: { orderNo: string; reference: string }) {
+		const number = orderNo.trim()
+		let token = placedOrder(number)?.token
+		if (!token && sessionToken()) {
+			token = (await this.data<Order>(`/x/identity/me/orders/${encodeURIComponent(number)}`, { auth: true })).access_token
+		}
+		if (!token) throw new GoCommerceError('Open this order again to enter its UPI reference.', 404, 'not_found')
+		const order = await this.data<Order>(`/api/orders/${encodeURIComponent(number)}/upi-reference`, {
+			method: 'POST',
+			body: { token, reference: String(reference).trim() },
+		})
+		return { ...toOrder(order), downloads: null }
+	}
+
 	/** Everything the signed-in shopper has bought, once each, most recent first. */
 	async buyAgain() {
 		const orders =

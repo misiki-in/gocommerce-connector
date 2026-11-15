@@ -141,6 +141,7 @@ down stays best-effort: the storefront renders from its static record.
 | payment methods | `/api/checkout` — cash on delivery, Razorpay, Cashfree on a rupee store, and the hosted-page gateways (see below) |
 | place order | `POST /api/checkout/{code}` with an `Idempotency-Key` |
 | order lookup | `/api/orders/{number}?token=` (guest), `/x/identity/me/orders` (account) |
+| Pay by UPI (D277) | `checkoutService.checkout('upi')` places it; an unpaid order's `upi` is `{ url, qrSvg, vpa, payee }`, the upi:// link and its QR code; `POST /api/orders/{number}/upi-reference` — `orderService.submitUpiReference({ orderNo, reference })` records the 12-digit UPI reference as the order's `paymentReference` |
 | sign-in, sign-up, profile, password reset | `/x/identity/*` |
 | address book | `/x/identity/me/addresses`, with its `label` (Home, Work, Other) |
 | PIN code autofill | `/api/postcodes/IN/{pin}` — `addressService.lookupPostcode({ country, postcode })`: city and state, or null when the engine has no directory or the PIN is unknown (D134) |
