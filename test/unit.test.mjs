@@ -1595,6 +1595,21 @@ test("a shop-the-look line-up carries its products and each look's picture from 
 	assert.equal(line.products[0].id, '7')
 })
 
+test("a fitting room carries its products and each outfit's picture from the engine", async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: '' })
+	const svc = new m.LayoutService(async () =>
+		Response.json({
+			data: {
+				page: 'home',
+				sections: [{ id: 'f', type: 'fitting-room', settings: { tops: [7], bottoms: [], outfits: [{ image: '/api/files/o.webp', products: [7] }] }, products: [product()] }],
+			},
+		}),
+	)
+	const [room] = (await svc.getHomeLayout()).sections
+	assert.equal(room.settings.outfits[0].image, 'http://engine.test/api/files/o.webp')
+	assert.equal(room.products[0].id, '7')
+})
+
 test('a preview key asks for the draft', async () => {
 	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
 	const seen = []
