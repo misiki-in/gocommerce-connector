@@ -145,6 +145,7 @@ down stays best-effort: the storefront renders from its static record.
 | sign-in, sign-up, profile, password reset | `/x/identity/*` |
 | address book | `/x/identity/me/addresses`, with its `label` (Home, Work, Other) |
 | PIN code autofill | `/api/postcodes/IN/{pin}` — `addressService.lookupPostcode({ country, postcode })`: city and state, or null when the engine has no directory or the PIN is unknown (D134) |
+| PIN code delivery check (D286) | `/api/shipping/check?postcode=&country=` — `addressService.checkDelivery({ postcode, country? })`: `{ postcode, country, city, state, deliverable, unknownPostcode, minDays, maxDays }`; the country defaults to the store's; days are null when no rate states them; throws on a failure |
 | wishlist | `/x/wishlist` |
 | reviews | `/x/reviews` |
 | home page pictures | `/x/banners?page=home`, on `pageService.getOne('home')` as `desktopBanners`, `mobileBanners` and `sections` |

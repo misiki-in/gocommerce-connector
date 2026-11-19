@@ -2457,6 +2457,35 @@ test('a PIN code is looked up on the engine, and an unknown one is null', async 
 	assert.deepEqual(asked, ['/api/postcodes/IN/400001', '/api/postcodes/IN/999999'])
 })
 
+test('delivery to a PIN code is asked of the engine and read into the page shape', async () => {
+	const asked = []
+	const svc = new m.AddressService(async (url) => {
+		const u = new URL(String(url))
+		asked.push(u.pathname + u.search)
+		if (u.searchParams.get('postcode') === '560001')
+			return Response.json({ data: { postcode: '560001', country: 'IN', city: 'Bengaluru', state: 'Karnataka', deliverable: true, min_days: 1, max_days: 3 } })
+		if (u.searchParams.get('postcode') === '999999')
+			return Response.json({ data: { postcode: '999999', country: 'IN', city: '', state: '', deliverable: false, unknown_postcode: true } })
+		return Response.json({ error: { code: 'internal', message: 'down' } }, { status: 500 })
+	})
+	assert.deepEqual(await svc.checkDelivery({ postcode: ' 560001 ', country: 'in' }), {
+		postcode: '560001',
+		country: 'IN',
+		city: 'Bengaluru',
+		state: 'Karnataka',
+		deliverable: true,
+		unknownPostcode: false,
+		minDays: 1,
+		maxDays: 3,
+	})
+	const unknown = await svc.checkDelivery({ postcode: '999999' })
+	assert.equal(unknown.deliverable, false)
+	assert.equal(unknown.unknownPostcode, true)
+	assert.equal(unknown.minDays, null, 'no days stated is null, never zero')
+	await assert.rejects(svc.checkDelivery({ postcode: '110001' }), 'a failure throws rather than answering no')
+	assert.deepEqual(asked.slice(0, 2), ['/api/shipping/check?postcode=560001&country=IN', '/api/shipping/check?postcode=999999'])
+})
+
 test('an address keeps its label, and a label cleared in the form is sent as cleared', () => {
 	const base = { firstName: 'A', lastName: 'B', address_1: '1 Marine Drive', city: 'Mumbai', state: 'Maharashtra', zip: '400001', countryCode: 'IN' }
 	assert.equal(m.toIdentityAddress({ ...base, label: 'Work' }).label, 'Work')
