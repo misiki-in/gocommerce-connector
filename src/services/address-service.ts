@@ -1,4 +1,4 @@
-import type { IdentityAddress, Postcode } from '../engine'
+import type { DeliveryCheck, IdentityAddress, Postcode } from '../engine'
 import { GoCommerceError } from '../errors'
 import { fromIdentityAddress, toIdentityAddress } from '../map'
 import { currentMe, type StorefrontAddress } from '../browser'
@@ -71,6 +71,29 @@ export class AddressService extends BaseService {
 		} catch (err) {
 			if (err instanceof GoCommerceError && (err.status === 404 || err.status === 400)) return null
 			throw err
+		}
+	}
+
+	/**
+	 * Whether the store delivers to a postcode and roughly when (D286), for the
+	 * product page's PIN code check. The country defaults to the store's own on
+	 * the engine. `minDays`/`maxDays` are null when no delivery rate states days;
+	 * `unknownPostcode` is a PIN India Post never issued. A network or engine
+	 * failure throws, so the page can offer a retry rather than a wrong "no".
+	 */
+	async checkDelivery({ postcode, country }: { postcode: string; country?: string }) {
+		const query: Record<string, string> = { postcode: String(postcode ?? '').trim() }
+		if (country) query.country = String(country).trim().toUpperCase()
+		const d = await this.data<DeliveryCheck>('/api/shipping/check', { query })
+		return {
+			postcode: d.postcode,
+			country: d.country,
+			city: d.city ?? '',
+			state: d.state ?? '',
+			deliverable: d.deliverable === true,
+			unknownPostcode: d.unknown_postcode === true,
+			minDays: d.min_days ?? null,
+			maxDays: d.max_days ?? null,
 		}
 	}
 

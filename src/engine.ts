@@ -640,3 +640,15 @@ export type MenuSummary = { handle: string; title: string }
 
 /** GET /api/postcodes/{country}/{code} (D134). */
 export type Postcode = { country: string; postcode: string; city: string; state: string; state_code: string }
+
+/** GET /api/shipping/check (D286): does the store deliver to a postcode, and roughly when. */
+export type DeliveryCheck = {
+	postcode: string
+	country: string
+	city: string
+	state: string
+	deliverable: boolean
+	unknown_postcode?: boolean
+	min_days?: number
+	max_days?: number
+}
