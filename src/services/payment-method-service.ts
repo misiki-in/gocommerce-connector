@@ -18,11 +18,17 @@ import { cashfreeIsTest, REDIRECT_GATEWAYS } from './checkout-service'
  * Cashfree takes only rupees, and the engine would find that out after creating
  * the order, so it is offered only on a rupee store. It has no icon of its own
  * here, so it gets the neutral card one.
+ *
+ * Part-paid cash on delivery (D297) is `COD_PARTIAL`, with `advance`, `minTotal` and `refundNote`.
+ * Its flow is `checkoutService.checkoutCodPartial`, which hands back the Razorpay or Cashfree
+ * modal's data for the advance; kitcommerce-core's PaymentModule does not dispatch it, so a
+ * storefront offering it places it at its own call site, as svelte-commerce does.
  */
 const DRIVABLE: Record<string, { code: string; img?: string }> = {
 	cod: { code: 'COD', img: '/payment/cod.svg' },
 	razorpay: { code: 'RAZORPAY' },
 	cashfree: { code: 'CASHFREE', img: '/payment/card.svg' },
+	cod_partial: { code: 'COD_PARTIAL', img: '/payment/cod.svg' },
 }
 
 const reported = new Set<string>()
@@ -64,6 +70,9 @@ export class PaymentMethodService extends BaseService {
 					rank: i,
 					active: true,
 					isActive: true,
+				}
+				if (m.advance) {
+					Object.assign(method, { advance: toMajor(m.advance), minTotal: toMajor(m.min_total), refundNote: m.refund_note ?? '' })
 				}
 				if (REDIRECT_GATEWAYS.has(m.code) && m.code !== redirect) Object.assign(method, { redirects: true })
 				// A getter, not a value: see cashfreeIsTest.

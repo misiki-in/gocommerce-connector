@@ -182,6 +182,33 @@ export class CheckoutService extends BaseService {
 	async captureCashfreePayment({ order_no }: { order_no?: string } = {}) {
 		return { order_no: order_no ?? null, status: 'processing' }
 	}
+	/**
+	 * Part-paid cash on delivery (D297): the order is placed pending and the store's gateway takes
+	 * the advance alone. `gateway` says which modal to open, and the rest is what
+	 * `checkoutRazorpay` or `checkoutCashfree` answers for its own method, for the advance. The
+	 * gateway's webhook confirms the order; its `paymentStatus` stays pending while the cash is due,
+	 * and `partialCod.advancePaid` says the advance arrived.
+	 */
+	async checkoutCodPartial({ cartId, origin }: { cartId?: string; origin?: string } = {}) {
+		const { id, extras, phone } = await this.storedCheckout(cartId)
+		// The engine picks the gateway, and Cashfree, the first by code, cannot be asked without a
+		// phone number; it would find that out after reserving the stock.
+		if (!extras.phone && !phone && (await this.listMethods()).methods.some((m) => m.code === 'cashfree')) {
+			throw new GoCommerceError('Add a phone number to pay the advance.', 400)
+		}
+		const result = await this.place('cod_partial', id, origin?.startsWith('https:') ? { return_url: successUrl(origin, id) } : {})
+		const data = result.payment.client_data ?? {}
+		const order_no = result.order.number
+		if (result.payment.kind === 'client_action' && data.gateway === 'razorpay' && data.razorpay_order_id) {
+			return { gateway: 'razorpay' as const, order_no, id: data.razorpay_order_id, key_id: data.key_id, amount: Number(data.amount), currency: data.currency }
+		}
+		if (result.payment.kind === 'client_action' && data.gateway === 'cashfree' && data.payment_session_id) {
+			cashfreeEnvironment = data.environment
+			return { gateway: 'cashfree' as const, order_no, payment_session_id: data.payment_session_id, order_id: data.order_id, environment: data.environment }
+		}
+		throw new GoCommerceError('The payment for the advance did not open. Please try again.', 502)
+	}
+
 	async checkoutPhonepe(): Promise<never> {
 		throw unsupported('checkoutPhonepe', 'the engine has no PhonePe gateway')
 	}
@@ -257,11 +284,12 @@ export class CheckoutService extends BaseService {
 
 	/**
 	 * What checkout would charge for the cart now, by the storefront's method
-	 * code (`COD`, `RAZORPAY`, `CASHFREE`, `PAYPAL`) or none yet (D185). Null until the
+	 * code (`COD`, `COD_PARTIAL`, `RAZORPAY`, `CASHFREE`, `PAYPAL`) or none yet (D185). Null until the
 	 * address step has stored an address, and null from an engine before D185.
 	 *
 	 * A refusal is checkout's own: the same GoCommerceError, with the same
-	 * message, that placing the order would raise now.
+	 * message, that placing the order would raise now. For `COD_PARTIAL` that
+	 * includes 422 `partial_cod_unavailable`, for a basket it cannot take (D297).
 	 */
 	async getQuote({ cartId, method = '' }: { cartId?: string; method?: string } = {}) {
 		const id = cartId || storedCartId()

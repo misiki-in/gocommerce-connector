@@ -26,6 +26,7 @@ import type {
 	Customer,
 	IdentityAddress,
 	Order,
+	PartialCOD,
 	OrderLine,
 	Product,
 	Review,
@@ -655,6 +656,11 @@ export function toOrder(o: Order) {
 		 * number filled in, `qrSvg` is the same link as a QR code drawn by the engine. Null otherwise.
 		 */
 		upi: o.upi ? { url: o.upi.url, qrSvg: o.upi.qr_svg, vpa: o.upi.vpa, payee: o.upi.payee ?? '' } : null,
+		/**
+		 * Part-paid cash on delivery (D297): `paymentStatus` stays pending until the cash is in, so a
+		 * page asks `partialCod.advancePaid` whether the online part went through. Null otherwise.
+		 */
+		partialCod: toPartialCod(o.partial_cod),
 		userEmail: o.email,
 		email: o.email,
 		phone: o.phone ?? null,
@@ -811,6 +817,21 @@ export function toCheckoutQuote(q: CheckoutQuote) {
 		codCharges: toMajor(q.payment_fee),
 		giftCard: q.gift_card ? { last4: q.gift_card.last4, amount: toMajor(q.gift_card.amount) } : null,
 		total: toMajor(q.total),
+		/** The split, quoted for `cod_partial` alone (D297). */
+		partialCod: toPartialCod(q.partial_cod),
+	}
+}
+
+/** What part-paid cash on delivery takes online now and in cash at the door (D297), in major units. */
+export function toPartialCod(p: PartialCOD | null | undefined) {
+	if (!p) return null
+	return {
+		payNow: toMajor(p.pay_now),
+		payOnDelivery: toMajor(p.pay_on_delivery),
+		refundNote: p.refund_note ?? '',
+		gateway: p.gateway ?? null,
+		advancePaid: !!p.advance_paid,
+		advancePaidAt: p.advance_paid_at ?? null,
 	}
 }
 

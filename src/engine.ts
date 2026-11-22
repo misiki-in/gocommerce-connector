@@ -321,9 +321,25 @@ export type Order = {
 	payment_reference?: string
 	/** On a Pay by UPI order still unpaid (D277): the upi:// link, its QR code as SVG and who is paid. */
 	upi?: { url: string; qr_svg: string; vpa: string; payee?: string } | null
+	/** On a part-paid cash-on-delivery order (D297): the advance paid online and the rest due in cash. */
+	partial_cod?: PartialCOD | null
 	access_token?: string
 	created_at: string
 	updated_at: string
+}
+
+/**
+ * Part-paid cash on delivery (D297): a fixed advance through the store's gateway, the rest in cash.
+ * `payment_status` stays `pending` until the cash is in; `advance_paid` is what confirms the order.
+ */
+export type PartialCOD = {
+	pay_now: Money
+	pay_on_delivery: Money
+	/** The gateway that takes the advance, `razorpay` or `cashfree`. */
+	gateway?: string
+	advance_paid?: boolean
+	advance_paid_at?: string
+	refund_note: string
 }
 
 export type PaymentIntent = {
@@ -337,8 +353,11 @@ export type CheckoutResult = { order: Order; payment: PaymentIntent }
 
 export type CheckoutOptions = {
 	payment_methods: string[]
-	/** `fee` is what choosing the method adds to the order (D165); absent, it adds nothing. */
-	methods: { code: string; name: string; fee?: Money }[]
+	/**
+	 * `fee` is what choosing the method adds to the order (D165); absent, it adds nothing. `advance`,
+	 * `min_total` (twice the advance) and `refund_note` are on `cod_partial` alone (D297).
+	 */
+	methods: { code: string; name: string; fee?: Money; advance?: Money; min_total?: Money; refund_note?: string }[]
 	currency: string
 }
 
@@ -355,6 +374,8 @@ export type CheckoutQuote = {
 	/** What a gift card on the cart pays (D250); `total` is what is left for the payment method. */
 	gift_card?: { last4: string; amount: Money } | null
 	total: Money
+	/** The split when the method is `cod_partial` (D297). */
+	partial_cod?: PartialCOD | null
 }
 
 export type ShippingRate = { rate_id: number; name: string; price: Money; zone_id: number }
