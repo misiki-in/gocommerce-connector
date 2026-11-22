@@ -3464,6 +3464,7 @@ test('a quote asks the engine with what checkout sends, and its figures arrive i
 			taxIncluded: false,
 			codCharges: 40,
 			giftCard: null,
+			partialCod: null,
 			total: 1151.19,
 		})
 		assert.deepEqual(asked[0], { cart: 'cart_q', country: 'IN', state: 'Maharashtra', shipping_rate_id: '7', method: 'cod', email: 'asha@example.com' })
@@ -3811,7 +3812,7 @@ test('a total that moved since the quote is refused with the new figures, and co
 		const changes = []
 		svc.expectTotal({ cartId: 'cart_q', total: 1151, onChange: (...args) => changes.push(args) })
 		const refused = await svc.checkoutCOD({ cartId: 'cart_q' }).catch((e) => e)
-		const figures = { subtotal: 1000, shippingCharges: 150, shippingMethod: 'Express', discount: 0, coupon: null, tax: 51, taxIncluded: false, codCharges: 0, giftCard: null, total: 1201 }
+		const figures = { subtotal: 1000, shippingCharges: 150, shippingMethod: 'Express', discount: 0, coupon: null, tax: 51, taxIncluded: false, codCharges: 0, giftCard: null, total: 1201, partialCod: null }
 		const sentence = 'Your total changed to ₹1,201. Check the new total and confirm again.'
 		assert.deepEqual([refused.status, refused.message, refused.details], [409, sentence, figures])
 		assert.deepEqual(changes, [[figures, sentence]])
@@ -4368,5 +4369,145 @@ test('a kept delivery choice is priced again from the engine each time the bag i
 	} finally {
 		delete globalThis.window
 		delete globalThis.document
+	}
+})
+
+// Part-paid cash on delivery (GoCommerce D297).
+
+test('part-paid cash on delivery is listed with its advance, least total and refund note, in rupees', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	m.clearStoreCache()
+	const note = 'The advance is refunded in full if the order is cancelled, refused at delivery or returned.'
+	const { data } = await new m.PaymentMethodService(async () =>
+		Response.json({
+			data: {
+				payment_methods: ['cod', 'cod_partial', 'razorpay'],
+				methods: [
+					{ code: 'cod', name: 'Cash on delivery', fee: inr(4000) },
+					{ code: 'cod_partial', name: 'Pay part now, rest in cash on delivery', fee: inr(2000), advance: inr(9900), min_total: inr(19800), refund_note: note },
+					{ code: 'razorpay', name: 'Razorpay' },
+				],
+				currency: 'INR',
+			},
+		}),
+	).list({})
+	const part = data.find((x) => x.engineCode === 'cod_partial')
+	assert.deepEqual(
+		[part.code, part.name, part.img, part.fee, part.advance, part.minTotal, part.refundNote],
+		['COD_PARTIAL', 'Pay part now, rest in cash on delivery', '/payment/cod.svg', 20, 99, 198, note],
+	)
+	assert.equal(data.find((x) => x.code === 'COD').advance, undefined, 'only the part-paid method has an advance')
+	m.clearStoreCache()
+	m.BaseService.setCredentials({ apiUrl: undefined })
+})
+
+test('a part-paid quote and order carry the split; an unavailable basket is checkout’s own 422', async () => {
+	const split = { pay_now: inr(9900), pay_on_delivery: inr(115219), gateway: 'razorpay', advance_paid: false, refund_note: 'Refunded in full.' }
+	assert.deepEqual(
+		m.toCheckoutQuote({ subtotal: inr(100000), shipping: inr(0), tax: inr(0), tax_inclusive: true, payment_fee: inr(0), total: inr(125119), partial_cod: split }).partialCod,
+		{ payNow: 99, payOnDelivery: 1152.19, refundNote: 'Refunded in full.', gateway: 'razorpay', advancePaid: false, advancePaidAt: null },
+	)
+	const o = m.toOrder({ ...cashfreeOrder, payment_provider: 'cod_partial', partial_cod: { ...split, advance_paid: true, advance_paid_at: '2026-11-22T10:00:00Z' } })
+	assert.equal(o.paymentMethod, 'COD_PARTIAL')
+	assert.equal(o.paymentStatus, m.toOrder(cashfreeOrder).paymentStatus, 'payment_status stays pending while the cash is due')
+	assert.deepEqual([o.partialCod.advancePaid, o.partialCod.advancePaidAt, o.partialCod.payNow], [true, '2026-11-22T10:00:00Z', 99])
+	assert.equal(m.toOrder(cashfreeOrder).partialCod, null)
+
+	quoteBrowser(shopper)
+	const asked = []
+	const svc = new m.CheckoutService(async (url) => {
+		const u = new URL(String(url))
+		if (u.pathname === '/api/carts/cart_q') return quoteCart('asha@example.com')
+		asked.push(u.searchParams.get('method'))
+		return Response.json(
+			{ error: { code: 'partial_cod_unavailable', message: 'part payment with cash on delivery is offered on orders of at least 19800; this one is 9000' } },
+			{ status: 422 },
+		)
+	})
+	try {
+		await assert.rejects(svc.getQuote({ method: 'COD_PARTIAL' }), (err) => err.status === 422 && err.code === 'partial_cod_unavailable')
+		assert.deepEqual(asked, ['cod_partial'])
+	} finally {
+		leaveBrowser()
+	}
+})
+
+test('checkoutCodPartial opens the gateway the engine names, for the advance', async () => {
+	quoteBrowser(withPhone)
+	const bodies = []
+	let clientData
+	const svc = new m.CheckoutService(async (url, init) => {
+		const path = new URL(String(url)).pathname
+		if (path === '/api/carts/cart_q') return quoteCart('asha@example.com')
+		if (path === '/api/checkout') return Response.json({ data: { methods: [{ code: 'razorpay', name: 'Razorpay' }], currency: 'INR' } })
+		if (path === '/api/checkout/cod_partial') {
+			bodies.push(JSON.parse(init.body))
+			const order = { ...cashfreeOrder, payment_provider: 'cod_partial' }
+			return Response.json({ data: { order, payment: { kind: 'client_action', provider: 'cod_partial', reference: 'ref_1', client_data: clientData } } })
+		}
+		return Response.json({ data: [] })
+	})
+	try {
+		clientData = { gateway: 'razorpay', razorpay_order_id: 'order_rp1', key_id: 'rzp_test', amount: '9900', currency: 'INR' }
+		assert.deepEqual(await svc.checkoutCodPartial({ cartId: 'cart_q', origin: 'https://shop.test' }), {
+			gateway: 'razorpay',
+			order_no: 'GC-5',
+			id: 'order_rp1',
+			key_id: 'rzp_test',
+			amount: 9900,
+			currency: 'INR',
+		})
+		assert.equal(bodies[0].return_url, 'https://shop.test/checkout/success?cart_id=cart_q')
+
+		clientData = { gateway: 'cashfree', payment_session_id: 'session_1', order_id: 'GC-5-ab12', environment: 'sandbox' }
+		assert.deepEqual(await svc.checkoutCodPartial({ cartId: 'cart_q' }), {
+			gateway: 'cashfree',
+			order_no: 'GC-5',
+			payment_session_id: 'session_1',
+			order_id: 'GC-5-ab12',
+			environment: 'sandbox',
+		})
+
+		clientData = { gateway: 'stripe', client_secret: 'x' }
+		await assert.rejects(svc.checkoutCodPartial({ cartId: 'cart_q' }), /did not open/, 'a gateway with no flow here is an error, not a silent order')
+	} finally {
+		leaveBrowser()
+	}
+})
+
+test('a part-paid order is checked at the gateway that took its advance, until the advance is in', async () => {
+	const kept = { gocommerce_orders: JSON.stringify([{ number: 'GC-1', token: 't', cartId: 'c', reference: 'cf_1' }]) }
+	globalThis.window = {
+		location: { origin: 'http://storefront.test', hostname: 'storefront.test' },
+		localStorage: { getItem: (k) => kept[k] ?? null, setItem() {}, removeItem() {} },
+	}
+	globalThis.document = { cookie: '' }
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const run = async (advancePaid, answer) => {
+		const seen = []
+		let paid = advancePaid
+		const svc = new m.OrderService(async (url, init) => {
+			seen.push(`${init.method ?? 'GET'} ${url.replace('http://engine.test', '').split('?')[0]}`)
+			if (init.method === 'POST') {
+				paid = answer
+				return Response.json({ data: { order: 'GC-1', payment_status: 'pending', advance_paid: String(answer) } })
+			}
+			if (url.includes('/x/')) return Response.json({ error: { code: 'not_found', message: 'x' } }, { status: 404 })
+			const partial_cod = { pay_now: inr(9900), pay_on_delivery: inr(105219), gateway: 'cashfree', advance_paid: paid, refund_note: '' }
+			return Response.json({ data: { ...cashfreeOrder, number: 'GC-1', payment_provider: 'cod_partial', partial_cod } })
+		})
+		return { seen, read: await svc.getOrder('GC-1') }
+	}
+	const GET = 'GET /api/orders/GC-1'
+	try {
+		let r = await run(false, true)
+		assert.deepEqual(r.seen.slice(0, 3), [GET, 'POST /x/payments-cashfree/orders/cf_1/verify', GET], 'an advance that arrived is read again')
+		assert.equal(r.read.partialCod.advancePaid, true)
+		r = await run(true)
+		assert.equal(r.seen.includes('POST /x/payments-cashfree/orders/cf_1/verify'), false, 'nothing is left to check online')
+	} finally {
+		delete globalThis.window
+		delete globalThis.document
+		m.BaseService.setCredentials({ apiUrl: undefined })
 	}
 })

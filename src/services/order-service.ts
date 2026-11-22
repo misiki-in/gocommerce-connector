@@ -61,15 +61,19 @@ export class OrderService extends BaseService {
 		if (kept) {
 			const read = () => this.data<Order>(`/api/orders/${encodeURIComponent(number)}`, { query: { token: kept.token } })
 			const order = await read()
-			const verify = VERIFY[order.payment_provider]
-			if (!verify || !kept.reference || !['pending', 'failed'].includes(order.payment_status)) {
+			// A part-paid order's advance is its gateway's to check, and once it is in there is nothing
+			// left online (D297); its payment_status stays pending while the cash is due.
+			const part = order.partial_cod
+			const verify = VERIFY[part?.gateway ?? order.payment_provider]
+			if (!verify || !kept.reference || !['pending', 'failed'].includes(order.payment_status) || part?.advance_paid) {
 				return this.withInvoice(order, kept.token)
 			}
 			// A failed check leaves the order as it read; the webhook may still settle it.
-			const checked = await this.data<{ payment_status: string }>(verify(encodeURIComponent(kept.reference)), {
+			const checked = await this.data<{ payment_status: string; advance_paid?: string }>(verify(encodeURIComponent(kept.reference)), {
 				method: 'POST',
 			}).catch(() => null)
-			return this.withInvoice(checked && checked.payment_status !== order.payment_status ? await read() : order, kept.token)
+			const moved = checked && (checked.payment_status !== order.payment_status || (part && checked.advance_paid === 'true'))
+			return this.withInvoice(moved ? await read() : order, kept.token)
 		}
 		if (sessionToken()) {
 			const order = await this.data<Order>(`/x/identity/me/orders/${encodeURIComponent(number)}`, { auth: true })
@@ -88,7 +92,8 @@ export class OrderService extends BaseService {
 	 */
 	private async withInvoice(order: Order, token?: string) {
 		const mapped = toOrder(order)
-		if (!token || ['pending', 'failed'].includes(order.payment_status)) return { ...mapped, downloads: null }
+		const unpaid = ['pending', 'failed'].includes(order.payment_status) && !order.partial_cod?.advance_paid
+		if (!token || unpaid) return { ...mapped, downloads: null }
 		const path = `/x/invoices/${encodeURIComponent(order.number)}`
 		const [issued, downloads] = await Promise.all([
 			this.data(path, { query: { token } }).then(
