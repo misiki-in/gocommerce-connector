@@ -262,6 +262,7 @@ export class StoreService extends BaseService {
 				// load on another's pages.
 				...adTags(plugins),
 				googleTagManager: googleTags(plugins),
+				...siteTags(plugins),
 				// Discount codes are core: every GoCommerce store takes them, so
 				// the code box is shown whatever the static record says.
 				isDiscountCoupons: { ...basePlugins.isDiscountCoupons, active: true },
@@ -385,6 +386,28 @@ function adTags(plugins: Map<string, { settings?: Record<string, unknown> }>) {
 			return [name, id ? { active: true, id } : { active: false }]
 		}),
 	)
+}
+
+/**
+ * Umami and Plausible, which the storefront puts in each page's head. Each is on only with every
+ * field it needs, so the static record's switch never decides: on a
+ * shared deployment it is every store's. Plausible's script is plausible.io's unless the store
+ * hosts its own, as the engine's default says.
+ */
+function siteTags(plugins: Map<string, { settings?: Record<string, unknown> }>) {
+	const field = (key: string, name: string) => String(plugins.get(key)?.settings?.[name] ?? '').trim()
+	const umami = { scriptUrl: field('umami', 'script_url'), websiteId: field('umami', 'website_id') }
+	const plausible = {
+		domain: field('plausible', 'domain'),
+		scriptUrl: field('plausible', 'script_url') || 'https://plausible.io/js/script.js',
+	}
+	return {
+		umami: plugins.has('umami') && umami.scriptUrl && umami.websiteId ? { active: true, ...umami } : { active: false },
+		plausible: plugins.has('plausible') && plausible.domain ? { active: true, ...plausible } : { active: false },
+		// Held off on purpose (2026-11-24): on a shared deployment it would let any store's owner run
+		// their own JavaScript on their storefront, checkout included. Off until the owner decides.
+		headerScripts: { active: false },
+	}
 }
 
 /**
