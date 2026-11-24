@@ -210,6 +210,9 @@ export class StoreService extends BaseService {
 					...flag(plugins.has('enquiry-mode')),
 					buttonText: plugins.get('enquiry-mode')?.settings?.button,
 				},
+				// D328: checkout on one page instead of address then payment. Per store, so the
+				// engine decides and a shared static record cannot switch it on for everyone.
+				onePageCheckout: flag(plugins.has('one-page-checkout')),
 				productEnquiries: flag(
 					plugins.has('contact-form') && String(plugins.get('contact-form')?.settings?.enquiries) !== 'false',
 				),
