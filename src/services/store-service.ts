@@ -389,8 +389,8 @@ function adTags(plugins: Map<string, { settings?: Record<string, unknown> }>) {
 }
 
 /**
- * Umami, Plausible and the store's own header HTML, which the storefront puts in each page's head.
- * Each is on only with every field it needs, so the static record's switch never decides: on a
+ * Umami and Plausible, which the storefront puts in each page's head. Each is on only with every
+ * field it needs, so the static record's switch never decides: on a
  * shared deployment it is every store's. Plausible's script is plausible.io's unless the store
  * hosts its own, as the engine's default says.
  */
@@ -401,11 +401,12 @@ function siteTags(plugins: Map<string, { settings?: Record<string, unknown> }>) 
 		domain: field('plausible', 'domain'),
 		scriptUrl: field('plausible', 'script_url') || 'https://plausible.io/js/script.js',
 	}
-	const html = field('header-scripts', 'html')
 	return {
 		umami: plugins.has('umami') && umami.scriptUrl && umami.websiteId ? { active: true, ...umami } : { active: false },
 		plausible: plugins.has('plausible') && plausible.domain ? { active: true, ...plausible } : { active: false },
-		headerScripts: html ? { active: true, html } : { active: false },
+		// Held off on purpose (2026-11-24): on a shared deployment it would let any store's owner run
+		// their own JavaScript on their storefront, checkout included. Off until the owner decides.
+		headerScripts: { active: false },
 	}
 }
 

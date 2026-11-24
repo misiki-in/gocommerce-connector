@@ -2688,7 +2688,7 @@ test('each ad and analytics tag reaches the storefront with its ID only while it
 	}
 })
 
-test('Umami, Plausible and header scripts reach the storefront only while the engine has them set', async () => {
+test('Umami and Plausible reach the storefront only while the engine has them set, and header scripts never do', async () => {
 	m.clearStoreCache()
 	m.BaseService.setCredentials({ apiUrl: 'http://engine.test/', proxyPath: undefined, baseDomain: undefined })
 	// The static record switching them on must not decide: it is every store's.
@@ -2711,7 +2711,8 @@ test('Umami, Plausible and header scripts reach the storefront only while the en
 	const on = (await svc.getStoreByIdOrDomain()).plugins
 	assert.deepEqual(on.umami, { active: true, scriptUrl: 'https://stats.example.com/script.js', websiteId: '94db1cb1-74f4-4a40-ad6c-962362670409' })
 	assert.deepEqual(on.plausible, { active: true, domain: 'shop.example.com', scriptUrl: 'https://plausible.io/js/script.js' })
-	assert.deepEqual(on.headerScripts, { active: true, html: '<meta name="google-site-verification" content="abc">' })
+	// Held off until the owner decides: a store's own JavaScript on a shared deployment.
+	assert.deepEqual(on.headerScripts, { active: false })
 
 	// A field it needs left empty is off, with nothing for a storefront to load.
 	m.clearStoreCache()
