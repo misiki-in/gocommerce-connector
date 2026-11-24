@@ -2688,6 +2688,48 @@ test('each ad and analytics tag reaches the storefront with its ID only while it
 	}
 })
 
+test('Umami, Plausible and header scripts reach the storefront only while the engine has them set', async () => {
+	m.clearStoreCache()
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test/', proxyPath: undefined, baseDomain: undefined })
+	// The static record switching them on must not decide: it is every store's.
+	m.setStaticStore(() => ({
+		id: 'from_config',
+		name: 'Shop',
+		plugins: { umami: { active: true }, plausible: { active: true }, headerScripts: { active: true, html: '<meta name="x">' } },
+	}))
+	let plugins = [
+		{ key: 'umami', title: 'Umami', settings: { script_url: ' https://stats.example.com/script.js ', website_id: '94db1cb1-74f4-4a40-ad6c-962362670409' } },
+		{ key: 'plausible', title: 'Plausible', settings: { domain: 'shop.example.com', script_url: '' } },
+		{ key: 'header-scripts', title: 'Header scripts', settings: { html: '<meta name="google-site-verification" content="abc">' } },
+	]
+	const svc = new m.StoreService(async (url) => {
+		const path = new URL(String(url)).pathname
+		if (path === '/api/checkout') return Response.json({ data: { currency: 'INR', methods: [] } })
+		if (path === '/api/plugins') return Response.json({ data: plugins })
+		return Response.json({ data: [] })
+	})
+	const on = (await svc.getStoreByIdOrDomain()).plugins
+	assert.deepEqual(on.umami, { active: true, scriptUrl: 'https://stats.example.com/script.js', websiteId: '94db1cb1-74f4-4a40-ad6c-962362670409' })
+	assert.deepEqual(on.plausible, { active: true, domain: 'shop.example.com', scriptUrl: 'https://plausible.io/js/script.js' })
+	assert.deepEqual(on.headerScripts, { active: true, html: '<meta name="google-site-verification" content="abc">' })
+
+	// A field it needs left empty is off, with nothing for a storefront to load.
+	m.clearStoreCache()
+	plugins = [
+		{ key: 'umami', title: 'Umami', settings: { script_url: 'https://stats.example.com/script.js', website_id: ' ' } },
+		{ key: 'plausible', title: 'Plausible', settings: { domain: '' } },
+		{ key: 'header-scripts', title: 'Header scripts', settings: { html: '' } },
+	]
+	const empty = (await svc.getStoreByIdOrDomain()).plugins
+	for (const name of ['umami', 'plausible', 'headerScripts']) assert.deepEqual(empty[name], { active: false }, name)
+
+	// Switched off on the engine, the same.
+	m.clearStoreCache()
+	plugins = []
+	const off = (await svc.getStoreByIdOrDomain()).plugins
+	for (const name of ['umami', 'plausible', 'headerScripts']) assert.deepEqual(off[name], { active: false }, name)
+})
+
 test('Google Analytics, Tag Manager and Ads reach the storefront in the shape it reads, only while set', async () => {
 	m.clearStoreCache()
 	m.BaseService.setCredentials({ apiUrl: 'http://engine.test/', proxyPath: undefined, baseDomain: undefined })
