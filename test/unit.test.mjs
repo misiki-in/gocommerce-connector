@@ -2629,6 +2629,25 @@ test("Criteo loads with the store's own account, and only when the store switche
 	assert.equal(off.plugins.criteo.active, false)
 })
 
+test('one-page checkout is on only when the store switched it on', async () => {
+	m.clearStoreCache()
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test/', proxyPath: undefined, baseDomain: undefined })
+	// The static record is every store's on a shared deployment: it must not switch it on.
+	m.setStaticStore(() => ({ id: 'from_config', name: 'Shop', plugins: { onePageCheckout: { active: true } } }))
+	let plugins = [{ key: 'one-page-checkout', title: 'One-page checkout', settings: {} }]
+	const svc = new m.StoreService(async (url) => {
+		const path = new URL(String(url)).pathname
+		if (path === '/api/checkout') return Response.json({ data: { currency: 'INR', methods: [] } })
+		if (path === '/api/plugins') return Response.json({ data: plugins })
+		return Response.json({ data: [] })
+	})
+	assert.deepEqual((await svc.getStoreByIdOrDomain()).plugins.onePageCheckout, { active: true })
+
+	m.clearStoreCache()
+	plugins = []
+	assert.deepEqual((await svc.getStoreByIdOrDomain()).plugins.onePageCheckout, { active: false })
+})
+
 test('the contact form sends the honeypot, so the engine is the one that drops a bot', async () => {
 	m.BaseService.setCredentials({ apiUrl: 'http://engine.test/', proxyPath: undefined, baseDomain: undefined })
 	const sent = []
