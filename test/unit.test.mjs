@@ -2371,6 +2371,19 @@ test('the basket’s offers and its distance from free delivery are in major uni
 	})
 })
 
+test('with no basket the offers are the shop’s order-wide codes, and an older engine has none', async () => {
+	const asked = []
+	const rows = [{ code: 'BIG100', title: '₹100 off', kind: 'fixed', value_minor: 10000, min_subtotal_minor: 30000, applies: false, remaining: money(30000, 'INR') }]
+	const offers = await new m.CartService(async (url) => {
+		asked.push(new URL(String(url)).pathname)
+		return Response.json({ data: rows })
+	}).getOffers()
+	assert.deepEqual(asked.filter((p) => p.endsWith('offers')), ['/api/offers'])
+	assert.deepEqual(offers.map((o) => [o.code, o.applies, o.remaining, o.minAmount]), [['BIG100', false, 300, 300]])
+	const older = await new m.CartService(async () => Response.json({ error: { code: 'not_found', message: 'nope' } }, { status: 404 })).getOffers()
+	assert.deepEqual(older, [])
+})
+
 test('the coupon drawer lists the shop’s listed codes for the stored cart', async () => {
 	await withCart(async () => {
 		const svc = new m.CouponService(async () =>

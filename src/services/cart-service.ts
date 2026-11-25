@@ -131,13 +131,15 @@ export class CartService extends BaseService {
 
 	/**
 	 * The codes the shop chose to show (D133), each with what it takes off this
-	 * bag or how much more the bag needs. None without a bag.
+	 * bag or how much more the bag needs. Without a bag, the shop's order-wide
+	 * codes as a product page shows them, none judged; an engine older than
+	 * that list answers 404, which is none.
 	 */
 	async getOffers({ cartId }: { cartId?: string | null } = {}) {
 		const id = clean(cartId) ?? storedCartId()
-		if (!id) return []
+		const path = id ? `/api/carts/${encodeURIComponent(id)}/offers` : '/api/offers'
 		try {
-			const rows = (await this.data<CartOffer[] | null>(`/api/carts/${encodeURIComponent(id)}/offers`)) ?? []
+			const rows = (await this.data<CartOffer[] | null>(path)) ?? []
 			const currency = await this.currency()
 			return rows.map((o) => toCartOffer(o, o.amount?.currency ?? o.remaining?.currency ?? currency))
 		} catch (err) {
