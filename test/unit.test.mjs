@@ -2449,6 +2449,15 @@ test('highlights, the free gift note and the sold count cross as the engine keep
 	assert.equal(bare.soldAtLeast, null, 'no count is no count, never zero')
 })
 
+test('the size chart crosses padded, and anything else is no chart (D329)', () => {
+	const p = m.toProduct(product({ size_chart: { unit: 'cm', columns: ['Chest', 'Length'], rows: [{ size: ' M ', values: ['102'] }, { size: '', values: ['1', '2'] }] } }))
+	assert.deepEqual(p.sizeChart, { unit: 'cm', columns: ['Chest', 'Length'], rows: [{ size: 'M', values: ['102', ''] }] })
+	assert.equal(m.toProduct(product()).sizeChart, null)
+	assert.equal(m.toProduct(product({ size_chart: null })).sizeChart, null)
+	assert.equal(m.toProduct(product({ size_chart: { unit: 'in', columns: [], rows: [] } })).sizeChart, null)
+	assert.equal(m.toProduct(product({ size_chart: { unit: 'mm', columns: ['Chest'], rows: [{ size: 'S', values: ['38'] }] } })).sizeChart.unit, 'in')
+})
+
 test('a PIN code is looked up on the engine, and an unknown one is null', async () => {
 	const asked = []
 	const svc = new m.AddressService(async (url) => {
