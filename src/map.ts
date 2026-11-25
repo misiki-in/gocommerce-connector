@@ -31,6 +31,7 @@ import type {
 	Product,
 	Review,
 	SearchDoc,
+	SizeChart,
 	Variant,
 	Vendor,
 	FreeShipping,
@@ -99,6 +100,24 @@ function highlightsOf(p: Product): string[] {
 function freeGiftOf(p: Product): string | null {
 	const raw = p.metadata?.free_gift
 	return typeof raw === 'string' && raw.trim() ? raw.trim() : null
+}
+
+/**
+ * The product's size chart (D329), as the storefront draws it: null when there
+ * is none or it is not one, short rows padded so every row answers every column.
+ */
+export function sizeChartOf(p: Product): SizeChart | null {
+	const c = p.size_chart
+	if (!c || !Array.isArray(c.columns) || !Array.isArray(c.rows)) return null
+	const columns = c.columns.map((x) => String(x ?? '').trim())
+	const rows = c.rows
+		.filter((r) => r && typeof r.size === 'string' && r.size.trim())
+		.map((r) => ({
+			size: r.size.trim(),
+			values: columns.map((_, i) => String((Array.isArray(r.values) ? r.values[i] : '') ?? '').trim()),
+		}))
+	if (!columns.length || !rows.length) return null
+	return { unit: c.unit === 'cm' ? 'cm' : 'in', columns, rows }
 }
 
 export function toVariant(v: Variant, p: Product, optionless: boolean) {
@@ -203,6 +222,7 @@ export function toProduct(p: Product, extra: { categoryHierarchy?: { name: strin
 		// Counted by the engine, rounded down, and absent rather than zero.
 		soldAtLeast: typeof p.sold_at_least === 'number' && p.sold_at_least > 0 ? p.sold_at_least : null,
 		designable: typeof p.designable === 'boolean' ? p.designable : undefined,
+		sizeChart: sizeChartOf(p),
 		// Product-level stock is what a card shows before a variant is picked:
 		// buyable when any live variant is, counted only where counting means
 		// something.
