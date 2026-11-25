@@ -4595,3 +4595,44 @@ test('a part-paid order is checked at the gateway that took its advance, until t
 		m.BaseService.setCredentials({ apiUrl: undefined })
 	}
 })
+
+test('a replacement request goes as the signed-in shopper, photos and all, and reads back mapped (D335)', async () => {
+	globalThis.window = {
+		location: { origin: 'http://storefront.test' },
+		localStorage: { getItem: () => 'tok', setItem() {}, removeItem() {} },
+	}
+	globalThis.document = { cookie: '' }
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test' })
+	const request = {
+		id: 4, kind: 'replacement', status: 'approved', lines: [{ order_line_id: 31, quantity: 1, title: 'Lamp' }],
+		description: 'Cracked', photos: ['/media/stores/s1/ab.jpg'], pickup_status: 'booked', pickup_note: 'AWB1',
+		replacement_order_number: 'GC-000071', created_at: '2026-11-25T10:00:00Z',
+	}
+	try {
+		let sent
+		const svc = new m.OrderService(async (url, init) => {
+			sent = { url, init }
+			return Response.json({ data: request }, { status: 201 })
+		})
+		const photo = new Blob([new Uint8Array([0xff, 0xd8, 0xff])], { type: 'image/jpeg' })
+		const got = await svc.requestReplacement({ orderNo: 'GC-000070', lines: [{ lineId: '31', qty: 1 }], description: ' Cracked ', photos: [photo] })
+		assert.equal(sent.url, 'http://engine.test/x/identity/me/orders/GC-000070/replacements')
+		assert.equal(sent.init.headers.Authorization, 'Bearer tok')
+		assert.equal(sent.init.headers['Content-Type'], undefined, 'fetch writes the multipart boundary itself')
+		assert.equal(sent.init.body.get('lines'), '[{"order_line_id":31,"quantity":1}]')
+		assert.equal(sent.init.body.get('description'), 'Cracked')
+		assert.equal(sent.init.body.getAll('photos').length, 1)
+		assert.deepEqual(got.lines, [{ lineId: '31', qty: 1, title: 'Lamp' }])
+		assert.deepEqual(got.photos, ['http://engine.test/media/stores/s1/ab.jpg'])
+		assert.equal(got.replacementOrderNo, 'GC-000071')
+
+		const offer = m.toReplacementOffer({ open_until: '2026-12-01T00:00:00Z', photo_required: true, replacement_only: true, max_photos: 5, requests: [request] })
+		assert.equal(offer.openUntil, '2026-12-01T00:00:00Z')
+		assert.equal(offer.requests[0].status, 'approved')
+		assert.equal(m.toReplacementOffer(null), null)
+	} finally {
+		delete globalThis.window
+		delete globalThis.document
+		m.BaseService.setCredentials({ apiUrl: undefined })
+	}
+})

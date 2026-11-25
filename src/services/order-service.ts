@@ -1,6 +1,6 @@
-import type { DigitalDownload, Order, Product } from '../engine'
+import type { DigitalDownload, Order, Product, ReplacementRequest } from '../engine'
 import { GoCommerceError, NotSupportedError } from '../errors'
-import { toOrder } from '../map'
+import { toOrder, toReplacementRequest } from '../map'
 import { toMajor } from '../money'
 import { inBrowser, placedOrder, placedOrderForCart, rememberOrder, sessionToken } from '../browser'
 import { BaseService, emptyPage, mediaUrl, toPage } from './base.service'
@@ -167,6 +167,38 @@ export class OrderService extends BaseService {
 			body: { token, reference: String(reference).trim() },
 		})
 		return { ...toOrder(order), downloads: null }
+	}
+
+	/**
+	 * Asks for items on a delivered order to be replaced (D335), as the signed-in shopper: the account
+	 * is the proof the order is theirs, so a guest is refused. `lines` name order line ids from
+	 * `lineItems[].id`. Answers the request as `order.replacement.requests` holds it; a refusal is a
+	 * GoCommerceError with the engine's sentence (outside the window, a photo needed, already asked
+	 * for), which is worth showing as it is.
+	 */
+	async requestReplacement({
+		orderNo,
+		lines,
+		description,
+		photos = [],
+		kind = 'replacement',
+	}: {
+		orderNo: string
+		lines: { lineId: string; qty: number }[]
+		description: string
+		photos?: Blob[]
+		kind?: 'replacement' | 'return'
+	}) {
+		const body = new FormData()
+		body.set('kind', kind)
+		body.set('description', description.trim())
+		body.set('lines', JSON.stringify(lines.map((l) => ({ order_line_id: Number(l.lineId), quantity: l.qty }))))
+		for (const p of photos) body.append('photos', p, (p as File).name || 'photo.jpg')
+		const req = await this.data<ReplacementRequest>(
+			`/x/identity/me/orders/${encodeURIComponent(orderNo.trim())}/replacements`,
+			{ method: 'POST', body, auth: true },
+		)
+		return toReplacementRequest(req)
 	}
 
 	/** Everything the signed-in shopper has bought, once each, most recent first. */

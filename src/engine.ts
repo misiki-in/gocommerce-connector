@@ -332,9 +332,35 @@ export type Order = {
 	upi?: { url: string; qr_svg: string; vpa: string; payee?: string } | null
 	/** On a part-paid cash-on-delivery order (D297): the advance paid online and the rest due in cash. */
 	partial_cod?: PartialCOD | null
+	/** On a signed-in shopper's own order in a store that takes replacement requests (D335). */
+	replacement?: ReplacementOffer | null
 	access_token?: string
 	created_at: string
 	updated_at: string
+}
+
+/** Until when a replacement can be asked for on an order, on what terms, and what was asked (D335). */
+export type ReplacementOffer = {
+	/** Null once no new request can be made: not delivered yet, or the window has closed. */
+	open_until: string | null
+	photo_required: boolean
+	replacement_only: boolean
+	max_photos: number
+	requests: ReplacementRequest[] | null
+}
+
+export type ReplacementRequest = {
+	id: number
+	kind: 'replacement' | 'return'
+	status: 'pending' | 'approved' | 'rejected'
+	lines: { order_line_id: number; quantity: number; title?: string }[]
+	description: string
+	photos: string[] | null
+	reject_reason?: string
+	replacement_order_number?: string
+	pickup_status: '' | 'queued' | 'booked' | 'failed' | 'manual'
+	pickup_note?: string
+	created_at: string
 }
 
 /**
