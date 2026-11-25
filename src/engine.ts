@@ -67,6 +67,13 @@ export type ProductOption = {
 	values: { id: number; value: string; position: number }[] | null
 }
 
+/** A size chart (D329): a row per size, a column per measurement, every value text. */
+export type SizeChart = {
+	unit: 'in' | 'cm'
+	columns: string[]
+	rows: { size: string; values: string[] }[]
+}
+
 export type Product = {
 	id: number
 	slug: string
@@ -90,6 +97,8 @@ export type Product = {
 	sold_at_least?: number
 	/** Sold only made to a shopper's design (D174); absent from an engine that predates the flag. */
 	designable?: boolean
+	/** The chart a shopper reads to choose a size (D329): the product's own, else its category's. */
+	size_chart?: SizeChart | null
 	options: ProductOption[] | null
 	variants: Variant[] | null
 	collections: { id: number; slug: string; title: string }[] | null
