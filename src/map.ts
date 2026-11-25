@@ -27,6 +27,8 @@ import type {
 	IdentityAddress,
 	Order,
 	PartialCOD,
+	ReplacementOffer,
+	ReplacementRequest,
 	OrderLine,
 	Product,
 	Review,
@@ -681,6 +683,12 @@ export function toOrder(o: Order) {
 		 * page asks `partialCod.advancePaid` whether the online part went through. Null otherwise.
 		 */
 		partialCod: toPartialCod(o.partial_cod),
+		/**
+		 * Replacement requests (D335), on a signed-in shopper's own order in a store that takes them.
+		 * `openUntil` is set while a new one can be asked for; `requests` are the ones already made.
+		 * Null where the store does not take them.
+		 */
+		replacement: toReplacementOffer(o.replacement),
 		userEmail: o.email,
 		email: o.email,
 		phone: o.phone ?? null,
@@ -843,6 +851,33 @@ export function toCheckoutQuote(q: CheckoutQuote) {
 }
 
 /** What part-paid cash on delivery takes online now and in cash at the door (D297), in major units. */
+export function toReplacementRequest(r: ReplacementRequest) {
+	return {
+		id: str(r.id),
+		kind: r.kind,
+		status: r.status,
+		lines: arr(r.lines).map((l) => ({ lineId: str(l.order_line_id), qty: l.quantity, title: l.title ?? '' })),
+		description: r.description,
+		photos: arr(r.photos).map((p) => mediaUrl(p) ?? p),
+		rejectReason: r.reject_reason || null,
+		replacementOrderNo: r.replacement_order_number || null,
+		/** queued or booked: a courier is coming. manual: the store books it. */
+		pickupStatus: r.pickup_status || null,
+		createdAt: r.created_at,
+	}
+}
+
+export function toReplacementOffer(o: ReplacementOffer | null | undefined) {
+	if (!o) return null
+	return {
+		openUntil: o.open_until ?? null,
+		photoRequired: !!o.photo_required,
+		replacementOnly: !!o.replacement_only,
+		maxPhotos: o.max_photos || 5,
+		requests: arr(o.requests).map(toReplacementRequest),
+	}
+}
+
 export function toPartialCod(p: PartialCOD | null | undefined) {
 	if (!p) return null
 	return {
