@@ -2692,6 +2692,27 @@ test('guest checkout reads the store’s own switch, and stays on when the engin
 	m.clearStoreCache()
 	down = true
 	assert.deepEqual((await svc.getStoreByIdOrDomain()).plugins.isGuestCheckout, { active: true })
+	assert.deepEqual((await svc.getStoreByIdOrDomain()).plugins.signInToShop, { active: false })
+})
+
+test('a store whose customers must sign in to shop says so, and takes no guest checkout (D341)', async () => {
+	m.clearStoreCache()
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test/', proxyPath: undefined, baseDomain: undefined })
+	m.setStaticStore(() => ({ id: 'from_config', name: 'Shop', plugins: { signInToShop: { active: true } } }))
+	let plugins = [{ key: 'guest-checkout', title: 'Guest checkout', settings: {} }, { key: 'sign-in-to-shop', title: 'Customers must sign in to shop', settings: {} }]
+	const svc = new m.StoreService(async (url) => {
+		const path = new URL(String(url)).pathname
+		if (path === '/api/checkout') return Response.json({ data: { currency: 'INR', methods: [] } })
+		if (path === '/api/plugins') return Response.json({ data: plugins })
+		return Response.json({ data: [] })
+	})
+	const on = (await svc.getStoreByIdOrDomain()).plugins
+	assert.deepEqual([on.signInToShop, on.isGuestCheckout], [{ active: true }, { active: false }])
+
+	m.clearStoreCache()
+	plugins = [{ key: 'guest-checkout', title: 'Guest checkout', settings: {} }]
+	const off = (await svc.getStoreByIdOrDomain()).plugins
+	assert.deepEqual([off.signInToShop, off.isGuestCheckout], [{ active: false }, { active: true }], 'the static record cannot switch it on')
 })
 
 test('the contact form sends the honeypot, so the engine is the one that drops a bot', async () => {
