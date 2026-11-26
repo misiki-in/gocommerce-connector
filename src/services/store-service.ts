@@ -217,7 +217,10 @@ export class StoreService extends BaseService {
 				// a guest's order when it is off; this lets checkout ask for the sign-in first.
 				// With no plugin list at all (the engine unreachable) it reads as on: the engine
 				// still refuses, and a blip must not send every shopper to sign in.
-				isGuestCheckout: flag(!plugins.size || plugins.has('guest-checkout')),
+				isGuestCheckout: flag((!plugins.size || plugins.has('guest-checkout')) && !plugins.has('sign-in-to-shop')),
+				// D341: only signed-in customers may browse, so the storefront puts a sign-in screen
+				// in front of its shopping pages. The engine refuses a guest's order either way.
+				signInToShop: flag(plugins.has('sign-in-to-shop')),
 				productEnquiries: flag(
 					plugins.has('contact-form') && String(plugins.get('contact-form')?.settings?.enquiries) !== 'false',
 				),
