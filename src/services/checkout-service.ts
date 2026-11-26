@@ -41,7 +41,7 @@ export class CheckoutService extends BaseService {
 		const quote = await this.data<{
 			rates: { rate_id: number; name: string; price: { amount_minor: number; currency: string } }[] | null
 			currency: string
-		}>('/api/checkout/rates', { query: { cart: id, country, state: ship?.state ? String(ship.state) : undefined } })
+		}>('/api/checkout/rates', { query: { cart: id, country, state: ship?.state ? String(ship.state) : undefined, postcode: ship?.zip ? String(ship.zip).trim() : undefined } })
 		return {
 			data: (quote.rates ?? []).map((r) => ({
 				id: String(r.rate_id),

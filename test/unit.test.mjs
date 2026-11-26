@@ -4456,6 +4456,45 @@ test('a kept delivery choice is priced again from the engine each time the bag i
 	}
 })
 
+test('delivery options are asked for with the address PIN code, so a zone limited to PIN codes matches', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: undefined, baseDomain: undefined })
+	const store = {
+		gocommerce_cart_pin: JSON.stringify({ shippingAddress: { countryCode: 'IN', state: 'Madhya Pradesh', zip: ' 473001 ' }, shippingRateId: '9', shippingRate: { id: '9', name: 'Local', minor: 0, currency: 'INR' } }),
+	}
+	globalThis.window = {
+		location: { origin: 'http://storefront.test', hostname: 'storefront.test' },
+		localStorage: { getItem: (k) => store[k] ?? null, setItem: (k, v) => (store[k] = v), removeItem: (k) => delete store[k] },
+	}
+	globalThis.document = { cookie: '' }
+	const asked = []
+	const fetcher = async (url) => {
+		const u = new URL(String(url))
+		if (u.pathname === '/api/checkout/rates') {
+			asked.push(Object.fromEntries(u.searchParams))
+			return Response.json({ data: { currency: 'INR', rates: [{ rate_id: 9, name: 'Local', price: money(0, 'INR'), zone_id: 1 }] } })
+		}
+		if (u.pathname === '/api/carts/pin') {
+			return Response.json({ data: { id: 'pin', status: 'open', currency: 'INR', item_count: 1, subtotal: money(5000, 'INR'),
+				line_items: [{ id: 1, product_id: 7, variant_id: 11, title: 'Kurta', quantity: 1, unit_price: money(5000, 'INR'), total: money(5000, 'INR') }] } })
+		}
+		return Response.json({ error: { code: 'not_found', message: 'not found' } }, { status: 404 })
+	}
+	try {
+		const { data } = await new m.CheckoutService(fetcher).getShippingRates({ cartId: 'pin' })
+		assert.equal(data.length, 1)
+		await new m.CartService(fetcher).getCartByCartId('pin')
+		assert.ok(asked.length >= 2, 'both the options list and the kept choice asked')
+		for (const q of asked) {
+			assert.equal(q.postcode, '473001')
+			assert.equal(q.state, 'Madhya Pradesh')
+			assert.equal(q.country, 'IN')
+		}
+	} finally {
+		delete globalThis.window
+		delete globalThis.document
+	}
+})
+
 // Part-paid cash on delivery (GoCommerce D297).
 
 test('part-paid cash on delivery is listed with its advance, least total and refund note, in rupees', async () => {

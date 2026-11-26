@@ -356,7 +356,7 @@ export class CartService extends BaseService {
 	private async rates(id: string): Promise<EngineRate[]> {
 		const ship = cartExtras(id).shippingAddress
 		const quote = await this.data<{ rates: EngineRate[] | null }>('/api/checkout/rates', {
-			query: { cart: id, country: this.addressCountry(id), state: ship?.state ? String(ship.state) : undefined },
+			query: { cart: id, country: this.addressCountry(id), state: ship?.state ? String(ship.state) : undefined, postcode: ship?.zip ? String(ship.zip).trim() : undefined },
 		})
 		return quote.rates ?? []
 	}
