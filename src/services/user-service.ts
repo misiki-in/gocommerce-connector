@@ -67,7 +67,12 @@ export class UserService extends BaseService {
 				...(phone ? { phone: String(phone) } : {}),
 			},
 		})
-		return this.signedIn(auth)
+		const me = await this.signedIn(auth)
+		// The engine sends no confirmation at signup, and every storefront then says a link was
+		// sent: ask for it now. Best effort: the account exists and is signed in either way, and a
+		// shop without email set up answers with an error the shopper should not see.
+		if (auth?.record?.email) await this.requestEmailVerification().catch(() => undefined)
+		return me
 	}
 
 	/** Signs out here and on the engine. The storefront assigns the answer to its user: `null`. */
