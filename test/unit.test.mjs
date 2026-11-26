@@ -4757,3 +4757,31 @@ test('a replacement request goes as the signed-in shopper, photos and all, and r
 		m.BaseService.setCredentials({ apiUrl: undefined })
 	}
 })
+
+test('signing up asks the engine to send the confirmation email, and a refusal never fails the signup', async () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: undefined, baseDomain: undefined })
+	for (const verifyStatus of [202, 500]) {
+		freshBrowser()
+		const calls = []
+		const fetch = async (url, init = {}) => {
+			const path = new URL(String(url)).pathname
+			calls.push({ path, auth: new Headers(init.headers).get('authorization') })
+			if (path === '/x/identity/register') {
+				const record = { id: 9, email: 'ada@example.com', name: 'Ada' }
+				return Response.json({ data: { token: 'sess_1', expires_at: '2099-01-01T00:00:00Z', record } }, { status: 201 })
+			}
+			if (path === '/x/identity/me/email-verification') {
+				return verifyStatus === 202
+					? Response.json({ data: { accepted: true } }, { status: 202 })
+					: Response.json({ error: { code: 'internal', message: 'email is not set up' } }, { status: 500 })
+			}
+			return Response.json({ error: { code: 'not_found', message: 'no' } }, { status: 404 })
+		}
+		const me = await new m.UserService(fetch).signup({ email: 'ada@example.com', password: 'pw-long-enough' })
+		assert.equal(me?.email, 'ada@example.com', `signed up (verification answered ${verifyStatus})`)
+		const ask = calls.find((c) => c.path === '/x/identity/me/email-verification')
+		assert.ok(ask, 'the confirmation email was asked for')
+		assert.equal(ask.auth, 'Bearer sess_1', 'as the new account')
+		assert.ok(calls.findIndex((c) => c.path === '/x/identity/register') < calls.indexOf(ask), 'after the account exists')
+	}
+})
