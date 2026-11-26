@@ -2670,6 +2670,30 @@ test('one-page checkout is on only when the store switched it on', async () => {
 	assert.deepEqual((await svc.getStoreByIdOrDomain()).plugins.onePageCheckout, { active: false })
 })
 
+test('guest checkout reads the store’s own switch, and stays on when the engine cannot say (D340)', async () => {
+	m.clearStoreCache()
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test/', proxyPath: undefined, baseDomain: undefined })
+	m.setStaticStore(() => ({ id: 'from_config', name: 'Shop', plugins: { isGuestCheckout: { active: false } } }))
+	let plugins = [{ key: 'guest-checkout', title: 'Guest checkout', settings: {} }, { key: 'sitemap', title: 'Sitemap', settings: {} }]
+	let down = false
+	const svc = new m.StoreService(async (url) => {
+		const path = new URL(String(url)).pathname
+		if (path === '/api/plugins' && down) return Response.json({ error: { message: 'down' } }, { status: 503 })
+		if (path === '/api/checkout') return Response.json({ data: { currency: 'INR', methods: [] } })
+		if (path === '/api/plugins') return Response.json({ data: plugins })
+		return Response.json({ data: [] })
+	})
+	assert.deepEqual((await svc.getStoreByIdOrDomain()).plugins.isGuestCheckout, { active: true })
+
+	m.clearStoreCache()
+	plugins = [{ key: 'sitemap', title: 'Sitemap', settings: {} }]
+	assert.deepEqual((await svc.getStoreByIdOrDomain()).plugins.isGuestCheckout, { active: false })
+
+	m.clearStoreCache()
+	down = true
+	assert.deepEqual((await svc.getStoreByIdOrDomain()).plugins.isGuestCheckout, { active: true })
+})
+
 test('the contact form sends the honeypot, so the engine is the one that drops a bot', async () => {
 	m.BaseService.setCredentials({ apiUrl: 'http://engine.test/', proxyPath: undefined, baseDomain: undefined })
 	const sent = []
@@ -3559,6 +3583,43 @@ test('a quote asks the engine with what checkout sends, and its figures arrive i
 			asked[0],
 			'the order is placed with exactly what was quoted',
 		)
+	} finally {
+		leaveBrowser()
+	}
+})
+
+test('checkout sends a signed-in shopper’s session, and a store’s sign-in refusal arrives as its own error (D340)', async () => {
+	quoteBrowser(shopper)
+	const sent = []
+	let refuse = false
+	const svc = new m.CheckoutService(async (url, init) => {
+		const u = new URL(String(url))
+		if (u.pathname === '/api/carts/cart_q') return quoteCart('asha@example.com')
+		if (u.pathname === '/api/checkout/cod') {
+			sent.push(init.headers.Authorization)
+			if (refuse)
+				return Response.json(
+					{ error: { code: 'sign_in_required', message: 'Please sign in or create an account to place your order.' } },
+					{ status: 401 },
+				)
+			const order = { id: 1, number: 'GC-1', status: 'confirmed', payment_status: 'pending', payment_provider: 'cod', currency: 'INR', total: inr(1000), address: {}, created_at: '', updated_at: '' }
+			return Response.json({ data: { order, payment: { kind: 'none', provider: 'cod' } } })
+		}
+		return Response.json({ data: [] })
+	})
+	try {
+		await svc.checkoutCOD({ cartId: 'cart_q' })
+		assert.equal(sent[0], undefined, 'a guest sends no Authorization')
+
+		window.localStorage.setItem('gocommerce_token', 'sess_1')
+		refuse = true
+		await assert.rejects(svc.checkoutCOD({ cartId: 'cart_q' }), (err) => {
+			assert.equal(sent[1], 'Bearer sess_1')
+			assert.equal(err.status, 401)
+			assert.equal(err.code, 'sign_in_required')
+			assert.equal(err.message, 'Please sign in or create an account to place your order.')
+			return true
+		})
 	} finally {
 		leaveBrowser()
 	}

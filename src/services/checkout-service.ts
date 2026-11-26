@@ -435,10 +435,14 @@ export class CheckoutService extends BaseService {
 			...(Object.keys(metadata).length ? { ...body, metadata } : body),
 			...(expected ? { quoted_total_minor: toMinor(expected.total, currency) } : {}),
 		}
+		// A signed-in shopper's session goes along, so a store with guest checkout off
+		// (D340) takes their order; a guest sends none and that store answers
+		// 401 sign_in_required, thrown like any other refusal.
+		const session = sessionToken()
 		const result = await this.data<CheckoutResult>(`/api/checkout/${encodeURIComponent(code)}`, {
 			method: 'POST',
 			body: sent,
-			headers: { 'Idempotency-Key': key },
+			headers: { 'Idempotency-Key': key, ...(session ? { Authorization: `Bearer ${session}` } : {}) },
 		}).catch((err: unknown) => {
 			if (keyAlreadyUsed(err)) {
 				throw new GoCommerceError('This order was already placed in another tab. Check that tab for its confirmation.', 400, err.code)

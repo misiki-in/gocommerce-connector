@@ -213,6 +213,11 @@ export class StoreService extends BaseService {
 				// D328: checkout on one page instead of address then payment. Per store, so the
 				// engine decides and a shared static record cannot switch it on for everyone.
 				onePageCheckout: flag(plugins.has('one-page-checkout')),
+				// Whether a shopper may check out without signing in (D340). The engine refuses
+				// a guest's order when it is off; this lets checkout ask for the sign-in first.
+				// With no plugin list at all (the engine unreachable) it reads as on: the engine
+				// still refuses, and a blip must not send every shopper to sign in.
+				isGuestCheckout: flag(!plugins.size || plugins.has('guest-checkout')),
 				productEnquiries: flag(
 					plugins.has('contact-form') && String(plugins.get('contact-form')?.settings?.enquiries) !== 'false',
 				),
