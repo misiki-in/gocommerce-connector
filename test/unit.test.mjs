@@ -3551,11 +3551,11 @@ test('a quote asks the engine with what checkout sends, and its figures arrive i
 			partialCod: null,
 			total: 1151.19,
 		})
-		assert.deepEqual(asked[0], { cart: 'cart_q', country: 'IN', state: 'Maharashtra', shipping_rate_id: '7', method: 'cod', email: 'asha@example.com' })
+		assert.deepEqual(asked[0], { cart: 'cart_q', country: 'IN', state: 'Maharashtra', postcode: '411001', shipping_rate_id: '7', method: 'cod', email: 'asha@example.com' })
 
 		await svc.checkoutCOD({ cartId: 'cart_q' })
 		assert.deepEqual(
-			{ cart: placed.cart_id, country: placed.address.country, state: placed.address.state, shipping_rate_id: String(placed.shipping_rate_id), method: 'cod', email: placed.email },
+			{ cart: placed.cart_id, country: placed.address.country, state: placed.address.state, postcode: placed.address.postal_code, shipping_rate_id: String(placed.shipping_rate_id), method: 'cod', email: placed.email },
 			asked[0],
 			'the order is placed with exactly what was quoted',
 		)
@@ -3670,7 +3670,7 @@ test('a quote with no method chosen is a preview, and PAYPAL is quoted as the st
 	})
 	try {
 		const preview = await svc.getQuote()
-		assert.deepEqual(asked[0], { cart: 'cart_q', country: 'IN', state: 'Maharashtra', email: 'cart@example.com' }, 'no method and no delivery choice yet: neither is sent')
+		assert.deepEqual(asked[0], { cart: 'cart_q', country: 'IN', state: 'Maharashtra', postcode: '411001', email: 'cart@example.com' }, 'no method and no delivery choice yet: neither is sent')
 		assert.deepEqual([preview.coupon, preview.discount, preview.taxIncluded, preview.total], [null, 0, true, 250])
 
 		await svc.getQuote({ method: 'PAYPAL' })
