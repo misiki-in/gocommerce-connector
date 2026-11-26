@@ -304,6 +304,7 @@ export class CheckoutService extends BaseService {
 					cart: id,
 					country: address?.country || undefined,
 					state: address?.state,
+					postcode: address?.postal_code || undefined,
 					...(extras.pickup ? { pickup: '1' } : {}),
 					shipping_rate_id: (!extras.pickup && extras.shippingRateId) || undefined,
 					method: code || undefined,
