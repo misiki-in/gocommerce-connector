@@ -535,6 +535,12 @@ export type StoreProfile = {
 	address?: { line1: string; line2: string; city: string; state: string; postal_code: string; country: string } | null
 	map_location?: string
 	opening_hours?: OpeningHours[]
+	/**
+	 * The home page's title, meta description and sharing picture, as the owner
+	 * wrote them on Store settings; each empty when unset, and absent on an
+	 * engine before it. The picture is a media path or an https link.
+	 */
+	home_seo?: { title?: string; description?: string; image?: string }
 }
 
 /** When the shop is open on one day: `day` is mon…sun, the times 24-hour HH:MM. */

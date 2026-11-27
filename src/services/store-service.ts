@@ -1,5 +1,5 @@
 import { keep, recall } from '../cache'
-import type { StorePassAnswer } from '../engine'
+import type { StorePassAnswer, StoreProfile } from '../engine'
 import { GoCommerceError } from '../errors'
 import { toMinor } from '../money'
 import { readStaticStore } from '../static-store'
@@ -47,6 +47,31 @@ function symbolFor(code: string): string {
  * engine's half is best-effort: unreachable, the storefront still renders
  * from its own record, and the failure shows up where a price is fetched.
  */
+/**
+ * `theme` with the store's home-page SEO laid over `theme.content`, or nothing
+ * when the store wrote none, so the static record's theme is left as it is.
+ */
+function homeSeo(theme: unknown, seo: StoreProfile['home_seo']): { theme?: Record<string, unknown> } {
+	const fields = {
+		...(seo?.title ? { seoTitle: seo.title } : {}),
+		...(seo?.description ? { seoDescription: seo.description } : {}),
+		...(seo?.image ? { seoImage: mediaUrl(seo.image) } : {}),
+	}
+	if (!Object.keys(fields).length) return {}
+	const base = (theme && typeof theme === 'object' ? theme : {}) as Record<string, unknown>
+	let content: unknown = base.content
+	// The storefront tolerates theme content served as a JSON string; so does this.
+	if (typeof content === 'string') {
+		try {
+			content = JSON.parse(content)
+		} catch {
+			content = {}
+		}
+	}
+	const own = content && typeof content === 'object' && !Array.isArray(content) ? content : {}
+	return { theme: { ...base, content: { ...own, ...fields } } }
+}
+
 export class StoreService extends BaseService {
 	private readonly facts = new StoreFacts(this._fetch)
 
@@ -192,6 +217,11 @@ export class StoreService extends BaseService {
 				: {}),
 			...(profile?.map_location ? { mapLocation: profile.map_location } : {}),
 			...(profile?.opening_hours?.length ? { openingHours: profile.opening_hours } : {}),
+			// The home page's head, as the owner wrote it on Store settings. Into the
+			// theme content the home page already reads its title and picture from, over
+			// the static record's, so the static record's other copy stays. Its own
+			// key for the description: theme content's `description` is shown copy.
+			...homeSeo(base.theme, profile?.home_seo),
 			currencyCode: code,
 			currencySymbol: sameCurrency ? (base.currencySymbol ?? symbolFor(code)) : symbolFor(code),
 			currency: {
