@@ -870,6 +870,8 @@ export function toReplacementRequest(r: ReplacementRequest) {
 		replacementOrderNo: r.replacement_order_number || null,
 		/** queued or booked: a courier is coming. manual: the store books it. */
 		pickupStatus: r.pickup_status || null,
+		/** A return the store has recorded as back with it. Any refund is still the store's to make. */
+		returned: !!r.return_id,
 		createdAt: r.created_at,
 	}
 }

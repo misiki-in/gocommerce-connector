@@ -364,6 +364,8 @@ export type ReplacementRequest = {
 	replacement_order_number?: string
 	pickup_status: '' | 'queued' | 'booked' | 'failed' | 'manual'
 	pickup_note?: string
+	/** A return's record on the order once the store has the goods back (D355). */
+	return_id?: number
 	created_at: string
 }
 

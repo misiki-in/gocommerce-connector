@@ -4751,6 +4751,10 @@ test('a replacement request goes as the signed-in shopper, photos and all, and r
 		assert.equal(offer.openUntil, '2026-12-01T00:00:00Z')
 		assert.equal(offer.requests[0].status, 'approved')
 		assert.equal(m.toReplacementOffer(null), null)
+
+		// A return reads as returned once the store records it back (D355).
+		assert.equal(got.returned, false)
+		assert.equal(m.toReplacementRequest({ ...request, kind: 'return', return_id: 9 }).returned, true)
 	} finally {
 		delete globalThis.window
 		delete globalThis.document
