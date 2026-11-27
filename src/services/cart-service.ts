@@ -242,9 +242,19 @@ export class CartService extends BaseService {
 		pickup?: boolean
 		/** Answers to the store's checkout questions, by the question's words (D271). */
 		answers?: Record<string, string> | null
+		/**
+		 * The shopper's note for the order (D345), at most 500 characters; `''` or null clears it.
+		 * Unlike the address it is kept on the engine's cart, which copies it onto the order.
+		 */
+		note?: string | null
 	}) {
 		const id = clean(args.cartId) ?? storedCartId()
 		if (!id) return emptyCart(await this.currency())
+		if (args.note !== undefined)
+			await this.data<Cart>(`/api/carts/${encodeURIComponent(id)}/note`, {
+				method: 'PUT',
+				body: { note: (args.note ?? '').trim() },
+			})
 
 		const patch: Parameters<typeof saveCartExtras>[1] = {}
 		if (args.pickup !== undefined) {

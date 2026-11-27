@@ -30,6 +30,22 @@ import { BaseService } from './base.service'
 export class CheckoutService extends BaseService {
 	private expected = new Map<string, Expected>()
 
+	/**
+	 * The shopper's note for the order (D345): a gift message, a GSTIN, a landmark or delivery
+	 * instructions. Kept on the engine's cart, which copies it onto the order at checkout, so it
+	 * survives the payment step and a reload. At most 500 characters; `''` clears it. Answers the
+	 * note as the engine kept it, trimmed.
+	 */
+	async setNote({ cartId, note }: { cartId?: string; note: string }) {
+		const id = cartId || storedCartId()
+		if (!id) throw new GoCommerceError('Your bag is empty.', 400)
+		const cart = await this.data<Cart>(`/api/carts/${encodeURIComponent(id)}/note`, {
+			method: 'PUT',
+			body: { note: String(note ?? '').trim() },
+		})
+		return { note: cart.note ?? '' }
+	}
+
 	/** Delivery options for the address on the cart: `{ data: [{ id, name, base_rate }] }`. */
 	async getShippingRates({ cartId }: { cartId?: string } = {}) {
 		const id = cartId || storedCartId()
