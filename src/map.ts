@@ -744,6 +744,9 @@ export function toCmsPage(p: CmsPage) {
 		metaTitle: p.seo?.title || p.title,
 		metaDescription: p.seo?.description || p.excerpt || null,
 		metaKeywords: p.seo?.keywords || null,
+		// The picture a shared link shows (og:image); null keeps the storefront's
+		// own fallback, the store's logo. A media path is put on the engine's origin.
+		metaImage: mediaUrl(p.seo?.image) || null,
 		publishedAt: p.published_at ?? null,
 		createdAt: p.created_at,
 		updatedAt: p.updated_at,

@@ -4785,3 +4785,39 @@ test('signing up asks the engine to send the confirmation email, and a refusal n
 		assert.ok(calls.findIndex((c) => c.path === '/x/identity/register') < calls.indexOf(ask), 'after the account exists')
 	}
 })
+
+test("the home page's SEO from Store settings reaches theme content, over the static record's, and none leaves it alone", async () => {
+	m.clearStoreCache()
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test/', proxyPath: undefined, baseDomain: undefined })
+	m.setStaticStore(() => ({ id: 'from_config', name: 'Shop', theme: { name: 'noor', content: { description: 'Footer copy', seoTitle: 'Static title' } } }))
+	let profile = { name: '', email: '', phone: '', home_seo: { title: 'Silver rings', description: 'Made in Pune.', image: '/media/s1/share.jpg' } }
+	const svc = new m.StoreService(async (url) => {
+		const path = new URL(String(url)).pathname
+		if (path === '/api/checkout') return Response.json({ data: { currency: 'INR', methods: [] } })
+		if (path === '/api/store') return Response.json({ data: profile })
+		return Response.json({ data: [] })
+	})
+	const store = await svc.getStoreByIdOrDomain()
+	assert.equal(store.theme.name, 'noor')
+	assert.deepEqual(store.theme.content, {
+		description: 'Footer copy',
+		seoTitle: 'Silver rings',
+		seoDescription: 'Made in Pune.',
+		seoImage: 'http://engine.test/media/s1/share.jpg',
+	})
+
+	// Blank, or an engine from before it, keeps the static theme as it was.
+	m.clearStoreCache()
+	profile = { name: '', email: '', phone: '', home_seo: { title: '', description: '', image: '' } }
+	const plain = await svc.getStoreByIdOrDomain()
+	assert.deepEqual(plain.theme.content, { description: 'Footer copy', seoTitle: 'Static title' })
+})
+
+test("a content page's sharing image is its own metaImage, on the engine's origin, and null without one", () => {
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test/', proxyPath: undefined, baseDomain: undefined })
+	const page = (seo) => ({ id: 3, slug: 'about-us', title: 'About', body: '<p>x</p>', status: 'published', language: 'en', seo, created_at: '', updated_at: '' })
+	assert.equal(m.toCmsPage(page({ image: '/media/s1/about.jpg' })).metaImage, 'http://engine.test/media/s1/about.jpg')
+	assert.equal(m.toCmsPage(page({ image: 'https://cdn.example/a.jpg' })).metaImage, 'https://cdn.example/a.jpg')
+	assert.equal(m.toCmsPage(page({ title: 'T' })).metaImage, null)
+	assert.equal(m.toCmsPage(page(undefined)).metaImage, null)
+})
