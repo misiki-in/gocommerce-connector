@@ -4821,3 +4821,45 @@ test("a content page's sharing image is its own metaImage, on the engine's origi
 	assert.equal(m.toCmsPage(page({ title: 'T' })).metaImage, null)
 	assert.equal(m.toCmsPage(page(undefined)).metaImage, null)
 })
+
+test('the shopper’s note is kept on the engine’s cart and read back off the order (D345)', async () => {
+	freshBrowser()
+	m.BaseService.setCredentials({ apiUrl: 'http://engine.test', proxyPath: undefined, baseDomain: undefined })
+	const puts = []
+	const kept = cart({ id: 'c1', note: '' })
+	const fetch = async (url, init = {}) => {
+		const path = new URL(String(url)).pathname
+		const body = init.body ? JSON.parse(init.body) : {}
+		if (init.method === 'PUT' && path === '/api/carts/c1/note') {
+			puts.push(body)
+			kept.note = body.note.trim()
+			return Response.json({ data: kept })
+		}
+		if (path === '/api/carts/c1') return Response.json({ data: kept })
+		return Response.json({ error: { code: 'not_found', message: 'no' } }, { status: 404 })
+	}
+	const note = 'Gift <script>x</script> 🎁 GSTIN 21ABCDE1234F1Z5'
+
+	assert.deepEqual(await new m.CheckoutService(fetch).setNote({ cartId: 'c1', note: `  ${note}\n` }), { note })
+	assert.deepEqual(puts.at(-1), { note }, 'sent trimmed')
+
+	const bag = await new m.CartService(fetch).updateCart2({ cartId: 'c1', note: null })
+	assert.deepEqual(puts.at(-1), { note: '' }, 'null clears it')
+	assert.equal(bag.note, '')
+	await new m.CartService(fetch).updateCart2({ cartId: 'c1', note: 'Near the temple' })
+	assert.equal((await new m.CartService(fetch).getCartByCartId('c1')).note, 'Near the temple')
+	const before = puts.length
+	await new m.CartService(fetch).updateCart2({ cartId: 'c1', phone: '+919876543210' })
+	assert.equal(puts.length, before, 'an address save without a note leaves it alone')
+
+	const order = (over) =>
+		m.toOrder({
+			id: 1, number: 'GC-1', status: 'confirmed', payment_status: 'pending', payment_provider: 'cod', currency: 'INR',
+			subtotal: money(100, 'INR'), shipping: money(0, 'INR'), discount: money(0, 'INR'), tax: money(0, 'INR'),
+			tax_inclusive: true, total: money(100, 'INR'), refunded: money(0, 'INR'), email: 'a@example.com',
+			address: { line1: '1 Way', city: 'Pune', postal_code: '411001', country: 'IN' },
+			line_items: null, fulfillments: null, created_at: '', updated_at: '', ...over,
+		})
+	assert.equal(order({ customer_note: note }).note, note, 'as typed: the page renders it as text')
+	assert.equal(order({}).note, null, 'none, or an engine before D345')
+})

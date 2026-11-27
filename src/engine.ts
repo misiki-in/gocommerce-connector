@@ -223,6 +223,8 @@ export type Cart = {
 	currency: string
 	email?: string
 	verified_email?: string
+	/** The shopper's note for the order (D345): a gift message, a GSTIN, a landmark. Absent on an engine before it. */
+	note?: string
 	channel?: string
 	line_items: CartLine[] | null
 	item_count: number
@@ -308,6 +310,8 @@ export type Order = {
 	subtotal: Money
 	shipping: Money
 	shipping_method?: string
+	/** The note the shopper left at checkout, copied from the cart (D345). Absent when none. */
+	customer_note?: string
 	discount: Money
 	/** What the payment method added (D165): cash on delivery's extra charge. Absent on an engine before it. */
 	payment_fee?: Money

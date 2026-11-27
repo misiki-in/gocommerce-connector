@@ -539,6 +539,8 @@ export function toCart(
 		/** Collect from the shop (D271), and the answers to the store's checkout questions. */
 		pickup: extras.pickup === true,
 		answers: extras.answers ?? null,
+		/** The shopper's note for the order (D345), kept on the engine's cart. Empty when none. */
+		note: c.note ?? '',
 		tax: 0,
 		taxIncluded: false,
 		codCharges: 0,
@@ -696,6 +698,8 @@ export function toOrder(o: Order) {
 		billingAddress: address,
 		shippingMethod: o.shipping_method ?? null,
 		shippingRate: o.shipping_method ? { name: o.shipping_method } : null,
+		/** The note the shopper left at checkout (D345), as they typed it; render it as text. Null when none. */
+		note: o.customer_note || null,
 		lineItems: arr(o.line_items).map((l) => toOrderLine(l, o.currency)),
 		fulfillments: arr(o.fulfillments).map((f) => ({
 			id: str(f.id),
