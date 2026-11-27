@@ -140,6 +140,8 @@ export function toVariant(v: Variant, p: Product, optionless: boolean) {
 		stock: v.active ? v.available : 0,
 		manageInventory: v.active ? v.track_inventory : true,
 		allowBackorder: v.active && v.continue_selling,
+		/** The merchant's stated ship-from day, YYYY-MM-DD, or null (D356). Show it as "Ships from", never as an arrival date. */
+		shipsFrom: v.ships_from || null,
 		active: v.active,
 		weight: v.weight_grams ?? null,
 		// The engine keeps every weight in grams.
@@ -479,6 +481,8 @@ export function toCartLine(l: CartLine, extra: { slug?: string; thumbnail?: stri
 		currentPrice: toMajor(l.current_price),
 		/** False for a download, a service or a gift card: nothing is posted, so nothing asks where to (D254). */
 		requiresShipping: l.requires_shipping !== false,
+		/** The variant's pre-order day, YYYY-MM-DD, or null (D356). */
+		shipsFrom: l.ships_from || null,
 		// The storefront's review step lists only lines marked for checkout. The
 		// engine checks a cart out whole, so every line is.
 		isSelectedForCheckout: true,
@@ -629,6 +633,8 @@ function toOrderLine(l: OrderLine, currency: string) {
 		total: toMajor(l.total),
 		currencyCode: currency,
 		status: l.shipped_quantity >= l.quantity ? 'Shipped' : 'Pending',
+		/** The pre-order day the shopper was told at checkout, YYYY-MM-DD, or null (D356). */
+		shipsFrom: l.ships_from || null,
 		designId: l.metadata?.design?.id ?? null,
 		designPreview: mediaUrl(l.metadata?.design?.preview_url),
 		files: [],

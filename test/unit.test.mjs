@@ -4863,3 +4863,20 @@ test('the shopper’s note is kept on the engine’s cart and read back off the 
 	assert.equal(order({ customer_note: note }).note, note, 'as typed: the page renders it as text')
 	assert.equal(order({}).note, null, 'none, or an engine before D345')
 })
+
+test('a pre-order ships-from day reaches the variant, the bag line and the order line (D356)', () => {
+	const v = m.toProduct(product({ variants: [variant({ ships_from: '2026-12-18' })] })).variants[0]
+	assert.equal(v.shipsFrom, '2026-12-18')
+	assert.equal(m.toProduct(product()).variants[0].shipsFrom, null, 'an engine before D356, or no date, is null')
+	assert.equal(m.toCartLine(cartLine({ ships_from: '2026-12-18' })).shipsFrom, '2026-12-18')
+	assert.equal(m.toCartLine(cartLine()).shipsFrom, null)
+	const o = m.toOrder({
+		id: 1, number: 'GC-000001', status: 'confirmed', payment_status: 'pending', payment_provider: 'cod',
+		currency: 'INR', subtotal: money(100, 'INR'), shipping: money(0, 'INR'), discount: money(0, 'INR'),
+		tax: money(0, 'INR'), tax_inclusive: true, total: money(100, 'INR'), refunded: money(0, 'INR'),
+		email: 'a@example.com', address: { name: 'A B', line1: '1', city: 'Pune', postal_code: '411001', country: 'IN' },
+		line_items: [{ id: 5, sku: 'S', title: 'T', quantity: 1, shipped_quantity: 0, unit_price: money(100, 'INR'), total: money(100, 'INR'), ships_from: '2026-12-18' }],
+		fulfillments: null, created_at: '2026-10-01T00:00:00Z', updated_at: '2026-10-01T00:00:00Z',
+	})
+	assert.equal(o.lineItems[0].shipsFrom, '2026-12-18')
+})

@@ -49,6 +49,8 @@ export type Variant = {
 	available: number
 	track_inventory: boolean
 	continue_selling: boolean
+	/** The merchant's stated ship-from day for a pre-order, YYYY-MM-DD (D356); absent when none is ahead. */
+	ships_from?: string
 	active: boolean
 	origin_country?: string
 	hs_code?: string
@@ -156,6 +158,8 @@ export type CartLine = {
 	compare_at_price?: Money
 	/** Whether the line is sent at all; absent from an engine before D254, which asked every basket for an address. */
 	requires_shipping?: boolean
+	/** The variant's pre-order day as it stands now, YYYY-MM-DD (D356). */
+	ships_from?: string
 }
 
 /** One file of one paid order line, as its buyer sees it (ext/digital, D254). */
@@ -284,6 +288,8 @@ export type OrderLine = {
 	shipped_quantity: number
 	unit_price: Money
 	total: Money
+	/** The pre-order day the line was sold with, YYYY-MM-DD (D356), kept whatever the product says now. */
+	ships_from?: string
 	/** `design` is a copy of the design a line was made to (D162), kept whatever later happens to it. */
 	metadata?: { design?: { id: string; preview_url: string } } & Record<string, unknown>
 }
